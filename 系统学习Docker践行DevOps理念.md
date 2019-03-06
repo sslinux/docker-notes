@@ -391,16 +391,441 @@ fab54bbc5330
 [vagrant@localhost ~]$ docker rm $(docker container ls -f "status=exited" -q)
 ```
 
-* docker container commit  == docker commit
-* docker image build == docker build
+* docker container commit  == docker commit  # 通过提交对一个container的修改来创建image
+* docker image build == docker build    # 通过Dockerfile创建image；
 
 ```bash
+[vagrant@localhost ~]$ docker container commit --help
 
+Usage:  docker container commit [OPTIONS] CONTAINER [REPOSITORY[:TAG]]
+
+Create a new image from a container's changes
+
+Options:
+  -a, --author string    Author (e.g., "John Hannibal Smith <hannibal@a-team.com>")
+  -c, --change list      Apply Dockerfile instruction to the created image
+  -m, --message string   Commit message
+  -p, --pause            Pause container during commit (default true)
+```
+
+```bash
+[vagrant@localhost ~]$ docker image build --help
+
+Usage:  docker image build [OPTIONS] PATH | URL | -
+
+Build an image from a Dockerfile
+```
+
+```bash
+# 分享docker image 一般都通过分享Dockerfile来实现；
+[vagrant@localhost ~]$ mkdir docker-centos-vim
+[vagrant@localhost ~]$ cd docker-centos-vim
+[vagrant@localhost docker-centos-vim]$ vim Dockerfile
+[vagrant@localhost docker-centos-vim]$ cat Dockerfile
+FROM centos
+RUN yum install -y vim
+[vagrant@localhost docker-centos-vim]$ docker build -t sslinux/centos-vim-new .
+```
+
+### Dockerfile语法梳理及最佳实践
+
+* FROM 
+
+        FROM scratch   # 制作base image
+        FROM centos    # 使用base image
+        FROM Ubuntu:14.04
+
+尽量使用官方的image作为base image
+
+* LABEL
+
+        LABEL maintainer="guiyin.xiong@gmail.com"
+        LABEL version="1.0"
+        LABEL description="This is description"
+
+Metadata不可少。
+
+* RUN
+
+        RUN yum update && yum install -y vim \
+        python-dev   # 反斜线换行
+
+        RUN apt-get update && apt-get install -y perl \
+        pwgen --no-install-recommends && rm -rf \
+        /var/lib/apt/lists/*    # 注意清理cache
+
+        RUN /bin/bash -c 'source $HOME/.bashrc;echo $HOME'
+
+RUN命令为了美观，复杂的RUN请用反斜线换行！避免无用分层，合并多条命令成一行。
+
+* WORKDIR   设定当前工作目录
+
+        WORKDIR /root
+        WORKDIR /test # 如果没有回自动创建test目录
+        WORKDIR demo
+        RUN pwd       # 输出结果应该是/test/demo
+
+用WORKDIR，不要用RUN cd，  尽量使用绝对路径；
+
+* ADD and COPY
+
+        ADD hello /
+        ADD test.tar.gz /    # 添加到根目录并解压
+
+        WORKDIR /root
+        ADD hell test/       # /root/test/hello
+
+        WORKDIR /root
+        COPY hello test/
+
+ADD or COPY：
+
+        大部分情况，COPY优于ADD！
+        ADD除了COPY还有额外功能(解压)!
+        添加远程文件/目录请使用curl或者wget。
+
+* ENV  定义环境变量
+
+        ENV MYSQL_VERSION 5.6  # 设置常量
+        RUN apt-get install -y mysql-server="${MYSQL_VERSION}" \
+        && rm -rf /var/lib/apt/lists/*   # 引用常量；
+
+尽量使用ENV增加可维护性!
+
+
+* VOLUME and EXPOSE   存储和网络
+
+* CMD and ENTRYPOINT  
+
+        RUN: 执行命令并创建新的Image Layer
+        CMD：设置容器启动后默认执行的命令和参数
+        ENTRYPOINT：设置容器启动时运行的命令；
+
+  - 1.Shell格式：
+
+```Dockerfile
+RUN apt-get install -y vim
+CMD echo "hello docker"
+ENTRYPOINT echo "hello docker"
+```
+
+  - 2.Exec格式：
+
+```Dockerfile
+RUN [ "apt-get","install", "-y", "vim" ]
+CMD [ "/bin/echo", "hello docker" ]
+ENTRYPOINT [ "/bin/echo", "hello docker" ]
+```
+
+```bash
+# Shell和Exec格式：
+[vagrant@localhost ShellAndExec]$ cat Dockerfile1
+FROM centos
+ENV name Docker
+ENTRYPOINT echo "hello $name"
+
+# build镜像
+[vagrant@localhost ShellAndExec]$ docker build -t sslinux/centos-entrypoint-shell -f Dockerfile1 .
+Sending build context to Docker daemon  3.072kB
+Step 1/3 : FROM centos
+ ---> 1e1148e4cc2c
+Step 2/3 : ENV name Docker
+ ---> Running in 7e29e982aa41
+Removing intermediate container 7e29e982aa41
+ ---> b4dfc2b1477f
+Step 3/3 : ENTRYPOINT echo "hello $name"
+ ---> Running in 87a000788347
+Removing intermediate container 87a000788347
+ ---> ec32b35112a0
+Successfully built ec32b35112a0
+Successfully tagged sslinux/centos-entrypoint-shell:latest
+# shell格式：替换变量引用；
+[vagrant@localhost ShellAndExec]$ docker run  sslinux/centos-entrypoint-shell
+hello Docker
+
+################################################
+[vagrant@localhost ShellAndExec]$ cat Dockerfile2
+FROM centos
+ENV name Docker
+ENTRYPOINT [ "/bin/echo", "hello $name" ]
+
+[vagrant@localhost ShellAndExec]$ docker build -t sslinux/centos-entrypoint-exec -f Dockerfile2 .
+Sending build context to Docker daemon  3.072kB
+Step 1/3 : FROM centos
+ ---> 1e1148e4cc2c
+Step 2/3 : ENV name Docker
+ ---> Using cache
+ ---> b4dfc2b1477f
+Step 3/3 : ENTRYPOINT [ "/bin/echo", "hello $name" ]
+ ---> Running in 6736f1fbabf1
+Removing intermediate container 6736f1fbabf1
+ ---> c769c3bd0475
+Successfully built c769c3bd0475
+Successfully tagged sslinux/centos-entrypoint-shell:latest
+
+# exec格式： 未替换变量引用；
+[vagrant@localhost ShellAndExec]$ docker run sslinux/centos-entrypoint-exec
+hello $name
+
+# exec格式若想替换变量引用，需要使用如下格式：
+ENTRYPOINT ["/bin/bash","-c","echo hello $name"]
 ```
 
 
+* CMD
+
+        容器启动时默认执行的命令
+        如果docker run 指定了其他命令，CMD命令被忽略；
+        如果定义了多个CMD，只有最后一个会执行；
+
+* ENTRYPOINT
+
+        让容器以应用程序或者服务的形式运行
+        就算docker run时指定了其他命令，也不会被忽略，一定会执行
+        最佳实践： 写一个shell脚本作为ENTRYPOINT
+
+```Dockerfile
+COPY docker-entrypoint.sh /usr/local/bin
+ENTRYPOINT ["docker-entrypoint.sh"]
+
+EXPOSE 27017
+CMD ["mongod"]
+```
+
+[Docker官方提供的Dockerfile](https://github.com/docker-library)
+[Docker官方有关Dockerfile的手册](https://docs.docker.com/engine/reference/builder/#run)
+
+
+
+### docker image的发布：
+
+https://hub.docker.com
+
+如果只是获取别人的镜像，则不需要注册，若要发布自己的镜像，则需要注册了。
+
+先登录，再push：
+
+```bash
+[vagrant@localhost ShellAndExec]$ docker login
+[vagrant@localhost ShellAndExec]$ docker push  sslinux/hello-world:latest
+```
+
+大部分人在使用非官方docker image这件事上会有顾虑，担心不安全；
+
+所以，推荐使用分享Dockerfile，需要与Github或Bitbuckket绑定，docker hub自动构建image，后续自己看。
+
+
+```bash
+# Docker官方提供的registry image：无web界面；
+docker run -d -p 5000:5000 --restart always --name registry registry:2
+```
+
+往私有docker registry中push image：
+
+```bash
+$ docker build -t 10.75.44.222:5000/hello-world .
+$ docker push 10.75.44.222:5000/hello-world
+# 会因为不被信任而导致失败；
+
+# 需要往/etc/docker/daemon.json文件中增加一个：
+
+{ "insecure-registries":["10.75.44.222:5000"] }
+
+# 在dockerd的Unit(.service)文件中添加一行：
+EnvironmentFile=/etc/docker/daemon.json
+
+$ sudo systemctl restart docker.service
+
+$ docker push 10.75.44.222:5000/hello-world # 此时再push就能成功了；
+```
+
+但是上面构建的docker registry无web界面，所以无法查看push上去的镜像；
+
+此时可以通过[Docker Registry API](https://docs.docker.com/registry/spec/api/#listing-repositories)去查看：
+
+
+```bash
+curl -X GET http://10.75.44.222:5000/v2/_catalog
+```
+
+删除本地镜像后也可以从刚才搭建的私有docker registry中pull回来；
+
+
+
+### Dockerfile实践： 部署Python flask程序：
+
+```python
+# python程序：
+[vagrant@localhost python-flask]$ cat app.py
+from flask import Flask
+app = Flask(__name__)
+@app.route('/')
+def hello():
+    return "hello docker"
+
+if __name__ == "__main__":
+    app.run()
+```
+
+```Dockerfile
+# Dockerfile
+[vagrant@localhost flask-hello-world]$ cat Dockerfile
+FROM python:2.7
+LABEL maintainer="Guiyin Xiong<guiyin.xiong@gmail.com>"
+RUN pip install flask
+COPY app.py /app/
+WORKDIR /app
+EXPOSE 5000
+CMD ["python","/app/app.py"]
+```
+
+```bash
+# build image:
+[vagrant@localhost flask-hello-world]$ docker build -t sslinux/flask-hello-world .
+
+# run container:
+[vagrant@localhost flask-hello-world]$ docker run -d -p 5000:5000 --name flask-hello-world sslinux/flask-hello-world
+fc66e642669d06e828ac9fd2c03473b2893c5c49897384d9c6f3529e19bc7137
+[vagrant@localhost flask-hello-world]$ docker ps
+CONTAINER ID        IMAGE                       COMMAND                CREATED             STATUS              PORTS                    NAMES
+fc66e642669d        sslinux/flask-hello-world   "python /app/app.py"   6 seconds ago       Up 5 seconds        0.0.0.0:5000->5000/tcp   flask-hello-world
+```
+
+### 容器的操作：
+
+```bash
+[vagrant@localhost flask-hello-world]$ docker container
+
+Usage:  docker container COMMAND
+
+Manage containers
+
+Commands:
+  attach      Attach local standard input, output, and error streams to a running container
+  commit      Create a new image from a container's changes
+  cp          Copy files/folders between a container and the local filesystem
+  create      Create a new container
+  diff        Inspect changes to files or directories on a container's filesystem
+  exec        Run a command in a running container
+  export      Export a container's filesystem as a tar archive
+  inspect     Display detailed information on one or more containers
+  kill        Kill one or more running containers
+  logs        Fetch the logs of a container
+  ls          List containers
+  pause       Pause all processes within one or more containers
+  port        List port mappings or a specific mapping for the container
+  prune       Remove all stopped containers
+  rename      Rename a container
+  restart     Restart one or more containers
+  rm          Remove one or more containers
+  run         Run a command in a new container
+  start       Start one or more stopped containers
+  stats       Display a live stream of container(s) resource usage statistics
+  stop        Stop one or more running containers
+  top         Display the running processes of a container
+  unpause     Unpause all processes within one or more containers
+  update      Update configuration of one or more containers
+  wait        Block until one or more containers stop, then print their exit codes
+
+Run 'docker container COMMAND --help' for more information on a command.
+```
+
+* docker exec CONTAINER  对运行中的容器执行一个程序：
+
+```bash
+[vagrant@localhost flask-hello-world]$ docker exec -it fc66 /bin/bash
+[vagrant@localhost flask-hello-world]$ docker exec -it fc66 python
+[vagrant@localhost flask-hello-world]$ docker exec -it fc66 ip addr
+```
+
+* docker stop CONTAINER 停止一个正在运行的容器；
+* docker start CONTAINER
+* docker rm (docker ps -aq)   # 删除容器；
+* docker inspect CONTAINER  # 查看容器的详细信息；
+* docker logs CONTAINER # 查看container运行的日志；
+
+
+### Dockerfile实践：
+
+```bash
+[vagrant@localhost flask-hello-world]$ docker run -it ubuntu
+Digest: sha256:108314d481f0085bf9233129e9112c59795fa1a74e3bd26e4827d0313e44dc26
+Status: Downloaded newer image for ubuntu:latest
+root@98e337b6897c:/# apt-get update && apt-get install -y stress
+# stress 是一个机器性能测试工具：
+
+root@98e337b6897c:/# stress --vm 1 --verbose
+stress: info: [252] dispatching hogs: 0 cpu, 0 io, 1 vm, 0 hdd
+stress: dbug: [252] using backoff sleep of 3000us
+
+# 超出内存限制，所以分配失败；
+root@98e337b6897c:/# stress --vm 1 --vm-bytes 500000M --verbose
+stress: info: [254] dispatching hogs: 0 cpu, 0 io, 1 vm, 0 hdd
+stress: dbug: [254] using backoff sleep of 3000us
+stress: dbug: [254] --> hogvm worker 1 [255] forked
+stress: dbug: [255] allocating 524288000000 bytes ...
+stress: FAIL: [255] (494) hogvm malloc failed: Cannot allocate memory
+stress: FAIL: [254] (394) <-- worker 255 returned error 1
+```
+
+* 将stress通过Dockerfile封装进image：
+
+```bash
+[vagrant@localhost ubuntu-stress]$ cat Dockerfile
+FROM ubuntu
+RUN apt-get update && apt-get install -y stress
+ENTRYPOINT ["/usr/bin/stress"]
+CMD []
+
+[vagrant@localhost ubuntu-stress]$ docker build -t sslinux/ubuntu-stress .
+```
+
+```bash
+[vagrant@localhost ubuntu-stress]$ docker run -it sslinux/ubuntu-stress
+stress imposes certain types of compute stress on your system
+
+Usage: stress [OPTION [ARG]] ...
+ -?, --help         show this help statement
+     --version      show version statement
+ -v, --verbose      be verbose
+ -q, --quiet        be quiet
+ -n, --dry-run      show what would have been done
+ -t, --timeout N    timeout after N seconds
+     --backoff N    wait factor of N microseconds before work starts
+ -c, --cpu N        spawn N workers spinning on sqrt()
+ -i, --io N         spawn N workers spinning on sync()
+ -m, --vm N         spawn N workers spinning on malloc()/free()
+     --vm-bytes B   malloc B bytes per vm worker (default is 256MB)
+     --vm-stride B  touch a byte every B bytes (default is 4096)
+     --vm-hang N    sleep N secs before free (default none, 0 is inf)
+     --vm-keep      redirty memory instead of freeing and reallocating
+ -d, --hdd N        spawn N workers spinning on write()/unlink()
+     --hdd-bytes B  write B bytes per hdd worker (default is 1GB)
+
+Example: stress --cpu 8 --io 4 --vm 2 --vm-bytes 128M --timeout 10s
+
+Note: Numbers may be suffixed with s,m,h,d,y (time) or B,K,M,G (size).
+```
+
+```bash
+# 可以在运行容器时，给stress命令传递参数：
+[vagrant@localhost ubuntu-stress]$ docker run -it sslinux/ubuntu-stress --vm 1 --verbose
+stress: info: [1] dispatching hogs: 0 cpu, 0 io, 1 vm, 0 hdd
+stress: dbug: [1] using backoff sleep of 3000us
+stress: dbug: [1] --> hogvm worker 1 [6] forked
+stress: dbug: [6] allocating 268435456 bytes ...
+stress: dbug: [6] touching bytes in strides of 4096 bytes ...
+stress: dbug: [6] freed 268435456 bytes
+stress: dbug: [6] allocating 268435456 bytes ...
+stress: dbug: [6] touching bytes in strides of 4096 bytes ...
+stress: dbug: [6] freed 268435456 bytes
+stress: dbug: [6] allocating 268435456 bytes ...
+stress: dbug: [6] touching bytes in strides of 4096 bytes ...
+```
 
 第四章：Docker的网络
+
+
 
 
 第五章：Docker的持久化存储和数据共享
