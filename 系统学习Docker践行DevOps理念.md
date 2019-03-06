@@ -1535,7 +1535,125 @@ Options:
 `docker network connect mybridge test1`
 
 
-### docker network host
+问题： port mapping(端口映射)
+
+```bash
+[vagrant@docker-node1 ~]$ docker run --name web -d -p 80:80 nginx
+a1b96d2319052864b14d35c8d1c38bdc630e788b1d7c370e61e5a38135036cc5
+```
+
+### docker network host and none
+
+```bash
+[vagrant@docker-node1 ~]$ docker network ls
+NETWORK ID          NAME                DRIVER              SCOPE
+c41f4c7edb5f        bridge              bridge              local
+3223d3ccbd65        host                host                local
+a8912c961918        mybridge            bridge              local
+985f7e6de4ae        none                null                local
+
+[vagrant@docker-node1 ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS               NAMES
+[vagrant@docker-node1 ~]$ docker run -d --name test --network none busybox /bin/sh -c "while true;do sleep;done"
+2b1fc3b3f19e4651467e47e2d982b2e2c18c64e9c9e59e1138a7341087617ca4
+[vagrant@docker-node1 ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS               NAMES
+2b1fc3b3f19e        busybox             "/bin/sh -c 'while t…"   11 seconds ago      Up 10 seconds                           test
+[vagrant@docker-node1 ~]$ docker network inspect none
+[
+    {
+        "Name": "none",
+        "Id": "985f7e6de4aecbdfe2ac734e361a30dbda0ed9cff796cf1455dba668b788ab20",
+        "Created": "2019-03-06T12:04:45.227627066Z",
+        "Scope": "local",
+        "Driver": "null",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": []
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            "2b1fc3b3f19e4651467e47e2d982b2e2c18c64e9c9e59e1138a7341087617ca4": {
+                "Name": "test",
+                "EndpointID": "2299b548f082bd1a4e6ecf461e756e22fc523163aafea8d8b55950f0f31b3d97",
+                "MacAddress": "",
+                "IPv4Address": "",
+                "IPv6Address": ""
+                # 没有任何网络信息；
+            }
+        },
+        "Options": {},
+        "Labels": {}
+    }
+]
+
+[vagrant@docker-node1 ~]$ docker exec -it test /bin/sh
+/ # ip addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    # 除了以交互式进入容器，没有其他方法可以访问；
+
+# 应用场景： 容器安全性较高；只能在本地访问；
+```
+
+创建连接到host的容器：
+
+```bash
+[vagrant@docker-node1 ~]$ docker run -d --name test --network host busybox /bin/sh -c "while true;do sleep;done"
+c7f308b8346b4916b1ac4222497917461f11ab829f34c5d8bb9920c312cd0d12
+[vagrant@docker-node1 ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS               NAMES
+c7f308b8346b        busybox             "/bin/sh -c 'while t…"   5 seconds ago       Up 4 seconds                            test
+[vagrant@docker-node1 ~]$ docker network inspect host
+[
+    {
+        "Name": "host",
+        "Id": "3223d3ccbd65f5076c1679616ff3cae154a860cdfdb4ebd9314ddaf28d4110f7",
+        "Created": "2019-03-06T12:04:45.245877699Z",
+        "Scope": "local",
+        "Driver": "host",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": []
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            "c7f308b8346b4916b1ac4222497917461f11ab829f34c5d8bb9920c312cd0d12": {
+                "Name": "test",
+                "EndpointID": "a785ed10bd18c7976c8330c12580b1406d5b50c3a088db63a7fd3484910469f4",
+                "MacAddress": "",
+                "IPv4Address": "",
+                "IPv6Address": ""
+                # 创建之初也没有网络信息；
+            }
+        },
+        "Options": {},
+        "Labels": {}
+    }
+]
+
+# 使用--network=host创建的容器，不具备独立的networknamespace，而是和docker-host共享；
+# 容易引发端口冲突；
+```
+
 
 
 
