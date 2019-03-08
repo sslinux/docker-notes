@@ -1655,7 +1655,131 @@ c7f308b8346b        busybox             "/bin/sh -c 'while t…"   5 seconds ago
 ```
 
 
+### 多容器复杂应用的部署：
 
+```bash
+[vagrant@docker-node1 flask-redis]$ pwd
+/home/vagrant/flask-redis
+[vagrant@docker-node1 flask-redis]$ cat app.py
+from flask import Flask
+from redis import Redis
+import os
+import socket
+
+app = Flask(__name__)
+redis = Redis(host=os.environ.get('REDIS_HOST', '127.0.0.1'), port=6379)
+
+
+@app.route('/')
+def hello():
+    redis.incr('hits')
+    return 'Hello Container World! I have been seen %s times and my hostname is %s.\n' % (redis.get('hits'),socket.gethostname())
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
+[vagrant@docker-node1 flask-redis]$ cat Dockerfile
+FROM python:2.7
+LABEL maintaner="Peng Xiao xiaoquwl@gmail.com"
+COPY . /app
+WORKDIR /app
+RUN pip install flask redis
+EXPOSE 5000
+CMD [ "python", "app.py" ]
+```
+
+```bash
+# 先启动redis容器：
+[vagrant@docker-node1 flask-redis]$ docker run  -d --name redis redis
+4e3dc5d8fef545812d2a5fe307d492a541435e3f638d8f54d980ad9947d88c9f
+[vagrant@docker-node1 flask-redis]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS               NAMES
+4e3dc5d8fef5        redis               "docker-entrypoint.s…"   4 seconds ago       Up 2 seconds        6379/tcp            redis
+
+
+# 基于Dockerfile build flask镜像：
+[vagrant@docker-node1 flask-redis]$ docker build -t sslinux/flask-redis .
+
+[vagrant@docker-node1 flask-redis]$ docker image ls
+REPOSITORY            TAG                 IMAGE ID            CREATED             SIZE
+sslinux/flask-redis   latest              39b0b6b05d72        51 seconds ago      919MB
+python                2.7                 3be5dc25d0fa        33 hours ago        914MB
+nginx                 latest              881bd08c0b08        35 hours ago        109MB
+redis                 latest              0f88f9be5839        35 hours ago        95MB
+busybox               latest              d8233ab899d4        2 weeks ago         1.2MB
+
+[vagrant@docker-node1 flask-redis]$ docker run -d --link redis --name flask-redis -e REDIS_HOST=redis sslinux/flask-redis
+0d53ee961485c67587eec6c63b0010ceba8de25c19f5021b4ed0197f6db4e7c1
+
+# 查看环境变量是否设置成功
+[vagrant@docker-node1 flask-redis]$ docker exec flask-redis /bin/sh -c "env | grep REDIS_HOST"
+REDIS_HOST=redis
+[vagrant@docker-node1 flask-redis]$
+
+# 查看--link设置是否生效，通过redis名称访问
+[vagrant@docker-node1 flask-redis]$ docker exec flask-redis /bin/sh -c "ping redis"
+PING redis (172.17.0.2) 56(84) bytes of data.
+64 bytes from redis (172.17.0.2): icmp_seq=1 ttl=64 time=0.061 ms
+64 bytes from redis (172.17.0.2): icmp_seq=2 ttl=64 time=0.228 ms
+64 bytes from redis (172.17.0.2): icmp_seq=3 ttl=64 time=0.135 ms
+64 bytes from redis (172.17.0.2): icmp_seq=4 ttl=64 time=0.084 ms
+^C
+
+# 在容器中访问flask-redis提供的服务，运行结果正常；
+[vagrant@docker-node1 flask-redis]$ docker exec flask-redis /bin/sh -c "curl 127.0.0.1:5000"
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100    81  100    81    0     0   3502      0 --:--:-- --:--:-- --:--:--  3681
+Hello Container World! I have been seen 1 times and my hostname is 0d53ee961485.
+[vagrant@docker-node1 flask-redis]$ docker exec flask-redis /bin/sh -c "curl 127.0.0.1:5000"
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100    81  100    81    0     0   4358      0 --:--:-- --:--:-- --:--:--  4500
+Hello Container World! I have been seen 2 times and my hostname is 0d53ee961485.
+[vagrant@docker-node1 flask-redis]$ docker exec flask-redis /bin/sh -c "curl 127.0.0.1:5000"
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100    81  100    81    0     0  16014      0 --:--:-- --:--:-- --:--:-- 20250
+Hello Container World! I have been seen 3 times and my hostname is 0d53ee961485.
+[vagrant@docker-node1 flask-redis]$ docker exec flask-redis /bin/sh -c "curl 127.0.0.1:5000"
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100    81  100    81    0     0   4979      0 --:--:-- --:--:-- --:--:--  5062
+Hello Container World! I have been seen 4 times and my hostname is 0d53ee961485.
+
+# 增减端口映射：
+[vagrant@docker-node1 flask-redis]$ docker run -d -p 5000:5000 --link redis --name flask-redis -e REDIS_HOST=redis sslinux/flask-redis
+45f62a824e1f0bee1f3be0b3b4306ca9c85d4c176dec0f81615c0ec289f64abc
+[vagrant@docker-node1 flask-redis]$ curl 127.0.0.1:5000
+Hello Container World! I have been seen 5 times and my hostname is 45f62a824e1f.
+[vagrant@docker-node1 flask-redis]$ curl 127.0.0.1:5000
+Hello Container World! I have been seen 6 times and my hostname is 45f62a824e1f.
+[vagrant@docker-node1 flask-redis]$ curl 127.0.0.1:5000
+Hello Container World! I have been seen 7 times and my hostname is 45f62a824e1f.
+```
+
+选项说明：
+
+        -e 向容器中传递环境变量，非常常用；
+
+
+思考：
+
+![docker多机通信](images/docker多机通信.png)
+
+
+### VXLAN，通过嵌套封装数据包的方式，自行研究；
+
+隧道，tunnel。
+
+underlay 和 overlay
+
+
+
+
+* 实验： 跨docker-host的docker container通信：
+
+#### 使用overlay通信，依赖于一个第三方的 分布式KV存储(有很多，例如：etcd)；
 
 
 
