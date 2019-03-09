@@ -1781,18 +1781,1305 @@ underlay 和 overlay
 
 #### 使用overlay通信，依赖于一个第三方的 分布式KV存储(有很多，例如：etcd)；
 
+个人理解： 此处的分布式KV存储(etcd)，主要用于多docker-host间共享名称空间(namespace).
+
+[基于分布式KV存储etcd构建多docker主机通信网络](multi-host-network.md)
 
 
+在docker-node1上运行容器test1：
 
+```bash
+[vagrant@docker-node1 etcd-v3.0.12-linux-amd64]$ docker run -d --name test1 --network demo busybox sh -c "while true;do sleep 3600;done"
+09eb541cb95b35a57e21c9d4ecdb383a0a1eeca7775b31191f00d6f848b3ef61
+```
+
+再在docker-node2上运行容器test1会提示已经存在：
+
+```bash
+[vagrant@docker-node2 etcd-v3.0.12-linux-amd64]$ sudo docker run -d --name test1 --network demo busybox sh -c "while true;do sleep 3600;done"
+docker: Error response from daemon: Conflict. The container name "/test1" is already in use by container "2f1976099cf6c71c121e67c281bd00b118ab88660754cbbeeef8061ea5fbdd67". You have to remove (or rename) that container to be able to reuse that name.
+See 'docker run --help'.
+
+# 运行容器test2：
+[vagrant@docker-node2 etcd-v3.0.12-linux-amd64]$ sudo docker run -d --name test2 --network demo busybox sh -c "while true;do sleep 3600;done"
+026f7965d85d553021cdda577797c3d9caf6c34f4e8729a1b3a8ec374f3908bf
+
+[vagrant@docker-node2 etcd-v3.0.12-linux-amd64]$ sudo docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS               NAMES
+026f7965d85d        busybox             "sh -c 'while true;d鈥?"   10 seconds ago      Up 8 seconds                            test2
+
+[vagrant@docker-node2 etcd-v3.0.12-linux-amd64]$ sudo docker exec test ip a
+Error: No such container: test
+[vagrant@docker-node2 etcd-v3.0.12-linux-amd64]$ sudo docker exec test2 ip a
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+7: eth0@if8: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1450 qdisc noqueue
+    link/ether 02:42:0a:00:00:03 brd ff:ff:ff:ff:ff:ff
+    inet 10.0.0.3/24 brd 10.0.0.255 scope global eth0
+       valid_lft forever preferred_lft forever
+10: eth1@if11: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1500 qdisc noqueue
+    link/ether 02:42:ac:12:00:02 brd ff:ff:ff:ff:ff:ff
+    inet 172.18.0.2/16 brd 172.18.255.255 scope global eth1
+       valid_lft forever preferred_lft forever
+
+
+[vagrant@docker-node1 etcd-v3.0.12-linux-amd64]$ sudo docker exec test1 ip a
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+14: eth0@if15: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1450 qdisc noqueue
+    link/ether 02:42:0a:00:00:02 brd ff:ff:ff:ff:ff:ff
+    inet 10.0.0.2/24 brd 10.0.0.255 scope global eth0
+       valid_lft forever preferred_lft forever
+16: eth1@if17: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1500 qdisc noqueue
+    link/ether 02:42:ac:13:00:02 brd ff:ff:ff:ff:ff:ff
+    inet 172.19.0.2/16 brd 172.19.255.255 scope global eth1
+       valid_lft forever preferred_lft forever
+
+# test1的ip地址为 10.0.0.2， test2的ip地址为10.0.0.3
+```
+
+查看加入到demo网络的容器：
+
+```bash
+[vagrant@docker-node1 etcd-v3.0.12-linux-amd64]$ sudo docker network inspect demo
+[
+    {
+        "Name": "demo",
+        "Id": "7de985df94d0df312d6789f63be04b1d64c7e906d0551dafb98c0b30c422f067",
+        "Created": "2019-03-08T02:55:07.84745607Z",
+        "Scope": "global",
+        "Driver": "overlay",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": {},
+            "Config": [
+                {
+                    "Subnet": "10.0.0.0/24",
+                    "Gateway": "10.0.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            "09eb541cb95b35a57e21c9d4ecdb383a0a1eeca7775b31191f00d6f848b3ef61": {
+                "Name": "test1",
+                "EndpointID": "bda0e4e0394472efa2dff5638013782e589fa340bfb3f2f9327c32377569469d",
+                "MacAddress": "02:42:0a:00:00:02",
+                "IPv4Address": "10.0.0.2/24",
+                "IPv6Address": ""
+            },
+            "ep-f465296d537b2bf31922653eb9c49766f7ee612172f7d175b5ebc41265054004": {
+                "Name": "test2",
+                "EndpointID": "f465296d537b2bf31922653eb9c49766f7ee612172f7d175b5ebc41265054004",
+                "MacAddress": "02:42:0a:00:00:03",
+                "IPv4Address": "10.0.0.3/24",
+                "IPv6Address": ""
+            }
+        },
+        "Options": {},
+        "Labels": {}
+    }
+]
+```
+
+```bash
+[vagrant@docker-node1 etcd-v3.0.12-linux-amd64]$ sudo docker exec test1 ping 10.0.0.3
+PING 10.0.0.3 (10.0.0.3): 56 data bytes
+64 bytes from 10.0.0.3: seq=0 ttl=64 time=3.661 ms
+64 bytes from 10.0.0.3: seq=1 ttl=64 time=1.076 ms
+^C
+[vagrant@docker-node1 etcd-v3.0.12-linux-amd64]$ sudo docker exec test1 ping test2
+PING test2 (10.0.0.3): 56 data bytes
+64 bytes from 10.0.0.3: seq=0 ttl=64 time=3.861 ms
+64 bytes from 10.0.0.3: seq=1 ttl=64 time=1.400 ms
+64 bytes from 10.0.0.3: seq=2 ttl=64 time=1.216 ms
+^C
+```
+
+* 补充：
+
+```bash
+[vagrant@docker-node1 etcd-v3.0.12-linux-amd64]$ docker network ls
+NETWORK ID          NAME                DRIVER              SCOPE
+c69963d6be74        bridge              bridge              local
+7de985df94d0        demo                overlay             global
+5053fa5e6015        docker_gwbridge     bridge              local    # docker_gwbridge是在创建overlay的网络是产生的；
+3223d3ccbd65        host                host                local
+a8912c961918        mybridge            bridge              local
+985f7e6de4ae        none                null                local
+[vagrant@docker-node1 etcd-v3.0.12-linux-amd64]$ docker exec test1 ip link
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+14: eth0@if15: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1450 qdisc noqueue
+    link/ether 02:42:0a:00:00:02 brd ff:ff:ff:ff:ff:ff
+16: eth1@if17: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1500 qdisc noqueue    # 容器中的eth1@if17,连接到docker-host的桥：docker_gwbridge上，以便对外通信；
+    link/ether 02:42:ac:13:00:02 brd ff:ff:ff:ff:ff:ff
+[vagrant@docker-node1 etcd-v3.0.12-linux-amd64]$ docker exec test1 ip addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+14: eth0@if15: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1450 qdisc noqueue
+    link/ether 02:42:0a:00:00:02 brd ff:ff:ff:ff:ff:ff
+    inet 10.0.0.2/24 brd 10.0.0.255 scope global eth0
+       valid_lft forever preferred_lft forever
+16: eth1@if17: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1500 qdisc noqueue
+    link/ether 02:42:ac:13:00:02 brd ff:ff:ff:ff:ff:ff
+    inet 172.19.0.2/16 brd 172.19.255.255 scope global eth1
+       valid_lft forever preferred_lft forever
+
+[vagrant@docker-node1 etcd-v3.0.12-linux-amd64]$ brctl show
+bridge name     bridge id               STP enabled     interfaces
+br-a8912c961918         8000.0242dd243a32       no
+docker0         8000.02425c78c1bf       no
+docker_gwbridge         8000.02423bfa5e2e       no              veth2bfddeb
+[vagrant@docker-node1 etcd-v3.0.12-linux-amd64]$ docker network inspect docker_gwbridge
+[
+    {
+        "Name": "docker_gwbridge",
+        "Id": "5053fa5e6015fea27350bfd82abb67ac8d391f43068d9707c142a49973ac8390",
+        "Created": "2019-03-08T03:09:16.26064904Z",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": [
+                {
+                    "Subnet": "172.19.0.0/16",
+                    "Gateway": "172.19.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            "09eb541cb95b35a57e21c9d4ecdb383a0a1eeca7775b31191f00d6f848b3ef61": {
+                "Name": "gateway_ba2afcb72d4f",
+                "EndpointID": "e4874d7ea276032d840e8c9a9255316ce18ddcefbed21bb122382b2544d904ef",
+                "MacAddress": "02:42:ac:13:00:02",
+                "IPv4Address": "172.19.0.2/16",
+                "IPv6Address": ""
+            }
+        },
+        "Options": {
+            "com.docker.network.bridge.enable_icc": "false",
+            "com.docker.network.bridge.enable_ip_masquerade": "true",
+            "com.docker.network.bridge.name": "docker_gwbridge"
+        },
+        "Labels": {}
+    }
+]
+```
+
+![overlayarch](images/overlayarch.png)
+
+![packetwalk](images/packetwalk.png)
+
+[更多详细资料](https://github.com/docker/labs)
+
+---
 
 
 第五章：Docker的持久化存储和数据共享
-第六章：Docker Compose多容器部署
-第七章：容器编排Docker Swarm
+
+![container_layer](images/container_layer.png)
+
+注意： Container layer是可读可写的，但container layer随容器的删除而被删除；
+
+![data_volume](images/data_volume.png)
+
+
+Docker持久化数据的方案：
+
+* 基于本地文件系统的Volume。可以在执行docker create 或 docker run时，通过-v参数将主机的目录作为容器的数据卷。这部分功能便是基于本地文件系统的volume管理。
+
+* 基于plugin的Volume，支持第三方的存储方案，比如NAS，aws。
+
+
+Volume的类型：
+
+* 受管理的data volume，由docker后台自动创建；位置固定，名字随机；
+
+* 绑定挂载的volume，具体挂载位置可以由用户指定；
+
+
+vagrant支持插件：
+
+```bash
+$ vagrant.exe plugin list
+No plugins installed.
+
+xiong@sslinux-development MINGW64 /f/vagrant/docker-k8s-devops-master-9287a2ca56433ca076078b564de9488df81b40be/chapter4
+$ vagrant.exe plugin install vagrant-scp
+Installing the 'vagrant-scp' plugin. This can take a few minutes...
+
+$ vagrant scp ../chapter5/labs/  docker-node1:/home/vagrant/labs/  # 复制文件；
+```
+
+数据持久化： Data Volume
+
+* Dockerfile中的关键字VOLUME，指定容器中的目录挂载到docker-host的文件系统上；
+
+```bash
+# 运行mysql 容器：
+[vagrant@docker-node1 chapter5]$ docker run -d --name mysql1 -e MYSQL_ALLOW_EMPTY_PASSWORD=true mysql
+
+# 查看volume：
+[vagrant@docker-node1 ~]$ docker volume ls
+DRIVER              VOLUME NAME
+local               758b80c444f33efe0baf8582c045cc3ab0da9d4d5bd3d78a910ce7782ec6b18c
+local               f4a0380b653c9766b1b504684cda61e9881e7fdc960e324fcd87e1627b2cfb31
+# 查看某个volume的挂载情况：
+[vagrant@docker-node1 ~]$ docker volume inspect 758b80c444f33efe0baf8582c045cc3ab0da9d4d5bd3d78a910ce7782ec6b18c
+[
+    {
+        "CreatedAt": "2019-03-06T16:12:44Z",
+        "Driver": "local",
+        "Labels": null,
+        "Mountpoint": "/var/lib/docker/volumes/758b80c444f33efe0baf8582c045cc3ab0da9d4d5bd3d78a910ce7782ec6b18c/_data",
+        "Name": "758b80c444f33efe0baf8582c045cc3ab0da9d4d5bd3d78a910ce7782ec6b18c",
+        "Options": null,
+        "Scope": "local"
+    }
+]
+[vagrant@docker-node1 ~]$ docker volume inspect f4a0380b653c9766b1b504684cda61e9881e7fdc960e324fcd87e1627b2cfb31
+[
+    {
+        "CreatedAt": "2019-03-06T15:18:06Z",
+        "Driver": "local",
+        "Labels": null,
+        "Mountpoint": "/var/lib/docker/volumes/f4a0380b653c9766b1b504684cda61e9881e7fdc960e324fcd87e1627b2cfb31/_data",
+        "Name": "f4a0380b653c9766b1b504684cda61e9881e7fdc960e324fcd87e1627b2cfb31",
+        "Options": null,
+        "Scope": "local"
+    }
+]
+# volume的名称很不友好；
+```
+
+运行容器时，自定义volume的名字：
+
+```bash
+[vagrant@docker-node1 ~]$ docker run  -d -v mysql:/var/lib/mysql --name mysql1 -e MYSQL_ALLOW_EMPTY_PASSWORD=true mysql
+dd84f57bb8bfdf0f294e83318d75932801d02838909358bfa4350a5f35075c0b
+[vagrant@docker-node1 ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                 NAMES
+dd84f57bb8bf        mysql               "docker-entrypoint.s鈥?"   4 seconds ago       Up 3 seconds        3306/tcp, 33060/tcp   mysql1
+[vagrant@docker-node1 ~]$ docker volume ls
+DRIVER              VOLUME NAME
+local               mysql
+[vagrant@docker-node1 ~]$ docker volume inspect mysql
+[
+    {
+        "CreatedAt": "2019-03-08T09:41:27Z",
+        "Driver": "local",
+        "Labels": null,
+        "Mountpoint": "/var/lib/docker/volumes/mysql/_data",
+        "Name": "mysql",
+        "Options": null,
+        "Scope": "local"
+    }
+]
+```
+
+### 验证volume中的数据不会因为容器的删除而删除：
+
+```bash
+[vagrant@docker-node1 ~]$ docker exec -it mysql1 /bin/bash
+root@dd84f57bb8bf:/# mysql -u root
+Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 8
+Server version: 8.0.15 MySQL Community Server - GPL
+
+Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+
+Oracle is a registered trademark of Oracle Corporation and/or its
+affiliates. Other names may be trademarks of their respective
+owners.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+mysql> show databases;
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| sys                |
++--------------------+
+4 rows in set (0.04 sec)
+
+mysql> create database docker;   # 创建一个新的数据库；
+Query OK, 1 row affected (0.00 sec)
+
+mysql> show databases;
++--------------------+
+| Database           |
++--------------------+
+| docker             |
+| information_schema |
+| mysql              |
+| performance_schema |
+| sys                |
++--------------------+
+5 rows in set (0.00 sec)
+```
+
+```bash
+# 删除容器：
+[vagrant@docker-node1 ~]$ docker rm -f mysql1
+mysql1
+[vagrant@docker-node1 ~]$ docker container ls   # 容器已经不存在；
+CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS               NAMES
+[vagrant@docker-node1 ~]$ docker volume ls   # 但是volume依然存在；
+DRIVER              VOLUME NAME
+local               mysql
+
+# 启动新的容器，使用和之前一样的volume
+[vagrant@docker-node1 ~]$ docker run -d -v mysql:/var/lib/mysql --name mysql2 -e MYSQL_ALLOW_EMPTY_PASSWORD=true mysql
+96ed8691ed0024ca841e0d619bd2c9927b9526b9abfff890d9878c31e46ea78f
+[vagrant@docker-node1 ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                 NAMES
+96ed8691ed00        mysql               "docker-entrypoint.s鈥?"   5 seconds ago       Up 4 seconds        3306/tcp, 33060/tcp   mysql2
+
+# 交互式进入新的容器，查看docker数据库是否依然存在；
+[vagrant@docker-node1 ~]$ docker exec -it mysql2 /bin/bash
+root@96ed8691ed00:/# mysql -u root
+Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 8
+Server version: 8.0.15 MySQL Community Server - GPL
+
+Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+
+Oracle is a registered trademark of Oracle Corporation and/or its
+affiliates. Other names may be trademarks of their respective
+owners.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+mysql> show databases;
++--------------------+
+| Database           |
++--------------------+
+| docker             |
+| information_schema |
+| mysql              |
+| performance_schema |
+| sys                |
++--------------------+
+5 rows in set (0.02 sec)
+
+mysql>
+```
+
+* 数据持久化： data volume　　　　VOLUME ["/var/lib/mysql"]
+
+        docker run -v mysql:/var/lib/mysql
+
+    data volume需要在Dockerfile中使用VOLUME去创建；
+
+
+* 数据持久化： Bind Mounting  
+
+    Bind Mounting不需要在Dockerfile中去创建；
+
+        docker run -v /home/aaa:/root/aaa   # 二者进行同步；
+
+
+* 示例：
+
+```Dockerfile
+[vagrant@docker-node1 docker-nginx]$ cat Dockerfile
+# this same shows how we can extend/change an existing official image from Docker Hub
+
+FROM nginx:latest
+# highly recommend you always pin versions for anything beyond dev/learn
+
+WORKDIR /usr/share/nginx/html
+# change working directory to root of nginx webhost
+# using WORKDIR is prefered to using 'RUN cd /some/path'
+
+COPY index.html index.html
+
+# I don't have to specify EXPOSE or CMD because they're in my FROM
+````
+
+```bash
+# 根据Dockerfile创建image
+[vagrant@docker-node1 docker-nginx]$ docker build -t sslinux/mynginx .
+Sending build context to Docker daemon  3.072kB
+Step 1/3 : FROM nginx:latest
+ ---> 881bd08c0b08
+Step 2/3 : WORKDIR /usr/share/nginx/html
+ ---> Running in 2e8087b02183
+Removing intermediate container 2e8087b02183
+ ---> e8369269d716
+Step 3/3 : COPY index.html index.html
+ ---> a54177c9b72b
+Successfully built a54177c9b72b
+Successfully tagged sslinux/mynginx:latest
+
+
+# 创建容器：
+[vagrant@docker-node1 docker-nginx]$ docker run -d --name web -p 80:80 sslinux/mynginx
+40a4f1d9545ec63e15de0bde8678eb592c2a40c44dc876e79fbf072e817bda5a
+[vagrant@docker-node1 docker-nginx]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                 NAMES
+40a4f1d9545e        sslinux/mynginx     "nginx -g 'daemon of鈥?"   5 seconds ago       Up 4 seconds        0.0.0.0:80->80/tcp    web
+96ed8691ed00        mysql               "docker-entrypoint.s鈥?"   10 minutes ago      Up 10 minutes       3306/tcp, 33060/tcp   mysql2
+
+[vagrant@docker-node1 docker-nginx]$ curl 127.0.0.1:80
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+
+  <title>hello</title>
+
+</head>
+
+<body>
+  <h1>Hello Docker! </h1>
+</body>
+</html>
+```
+
+```bash
+# 创建新的容器，使用 bind Mounting：
+[vagrant@docker-node1 docker-nginx]$ docker run -d -p 80:80 --name web -v $(pwd):/usr/share/nginx/html sslinux/mynginx
+dea07ed696d9edf86ad43660ac9c31132df4b850bbccb860be067721df700b3e
+
+[vagrant@docker-node1 docker-nginx]$ docker exec -it web /bin/bash
+root@dea07ed696d9:/usr/share/nginx/html# ls
+Dockerfile  index.html
+root@dea07ed696d9:/usr/share/nginx/html# touch test.txt
+root@dea07ed696d9:/usr/share/nginx/html# exit
+exit
+[vagrant@docker-node1 docker-nginx]$ ls
+Dockerfile  index.html  test.txt
+
+# docker-host上的目录和container中的目录是同步的；
+```
+
+* 开发者利器：docker bind Mounting
+
+```bash
+[vagrant@docker-node1 flask-skeleton]$ pwd
+/home/vagrant/chapter5/labs/flask-skeleton
+[vagrant@docker-node1 flask-skeleton]$ ls
+CONTRIBUTING.md  doc  Dockerfile  LICENSE  manage.py  migrations  README.md  requirements.txt  scripts  skeleton  test-requirements.txt  tests  tox.ini
+[vagrant@docker-node1 flask-skeleton]$ cat Dockerfile
+FROM python:2.7
+LABEL maintainer="Peng Xiao<xiaoquwl@gmail.com>"
+
+COPY . /skeleton
+WORKDIR /skeleton
+RUN pip install -r requirements.txt
+EXPOSE 5000
+ENTRYPOINT ["scripts/dev.sh"]
+```
+
+```bash
+# 温馨提示，在build image之前要确保scripts权限正确；
+[vagrant@docker-node1 flask-skeleton]$ docker build -t sslinux/flask-skeleton .
+[vagrant@docker-node1 flask-skeleton]$ docker run -d -p 80:5000 --name flask sslinux/flask-skeleton
+5ab1bf0d15821ebcb649dcd1a690bb11592af98430f2164b3ece52bceeb49215
+
+[vagrant@docker-node1 flask-skeleton]$ curl 127.0.0.1
+
+[vagrant@docker-node1 flask-skeleton]$ docker rm -f flask
+flask
+# 使用Bind Mounting：
+[vagrant@docker-node1 flask-skeleton]$ docker run -d -p 80:5000 -v $(pwd):/skeleton --name flask sslinux/flask-skeleton
+e28e84adb5528af44666b6756108fb128918e41442b0bc03dafecae4cf10d461
+
+# 此时修改自己的python程序，docker container中会同步，我们在浏览器中也能实时看到结果。
+```
+
+---
+
+## 第六章：Docker Compose多容器部署
+
+*  部署一个WordPress：
+
+```bash
+# 创建mysql容器：
+[vagrant@docker-node1 ~]$ docker run -d --name mysql -v mysql-data:/var/lib/mysql -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=wordpress mysql
+738c9d52b30ecc68f96ed6373c89a90099de53ccd7ce0fc4c25f85cf75828788
+[vagrant@docker-node1 ~]$ docker ps
+CONTAINER ID        IMAGE                    COMMAND                  CREATED             STATUS              PORTS                  NAMES
+738c9d52b30e        mysql                    "docker-entrypoint.s鈥?"   6 seconds ago       Up 5 seconds        3306/tcp, 33060/tcp    mysql
+
+# 启动WordPress容器：
+[vagrant@docker-node1 ~]$ docker run -d --name wordpress -e WORDPRESS_DB_HOST=mysql:3306 --link mysql -p 8080:80 wordpress
+30dd6318c721864029ece7673d5e27d971e351437718cb60d823c4975c6a5027
+[vagrant@docker-node1 ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                  NAMES
+30dd6318c721        wordpress           "docker-entrypoint.s鈥?"   5 seconds ago       Up 4 seconds        0.0.0.0:8080->80/tcp   wordpress
+738c9d52b30e        mysql               "docker-entrypoint.s鈥?"   3 minutes ago       Up 3 minutes        3306/tcp, 33060/tcp    mysql
+
+# 此时便可以通过浏览器访问docker-host的8080端口进行安装了；
+```
+
+* Docker Compose： 同时管理一组服务中的多个容器；
+
+* 多容器的APP太恶心：
+  - 要从多个Dockerfile build image 或者 Dockerhub拉取image；
+  - 要创建多个container；
+  - 要管理这些container(启动停止删除)
+
+* 什么是Docker Compose？
+  - Docker Compose是一个工具；
+  - 这个工具可以通过yml文件定义多容器的docker应用；
+  - 通过一条命令就可以根据yml文件的定义去创建或者管理这多个容器。
+
+* docker-compose.yml文件：
+  - 三大概念：
+    * Services：一个service代表一个container；service的启动类似docker run，可以指定network和volume；
+    * Networks
+    * Volumes
+
+```yaml
+services:
+  db:
+    image: postgres:9.4   # 从Dockerhub上拉取image；
+    build: ./worker   # 使用该目录下的Dockerfile构建image；
+    volumes:
+      - "db-data:/var/lib/postgresql/data"
+    networks:
+      - back-tier
+
+# docker volume create db-data
+volumes:
+  db-data:
+
+# docker network create -d bridge back-tier
+# docker network create -d bridge front-tier
+networks:
+  front-tier:
+    driver: bridge
+  back-tier:
+    driver: bridge
+
+# 等效于：
+# docker run -d --network back-tier -v db-data:/var/lib/postgresql/data postgresql:9.4
+```
+
+* docker-compose.yml完整示例：
+
+```yaml
+[vagrant@docker-node1 wordpress]$ cat docker-compose.yml
+version: '3'
+
+services:
+
+  wordpress:
+    image: wordpress
+    ports:
+      - 8080:80
+    environment:
+      WORDPRESS_DB_HOST: mysql
+      WORDPRESS_DB_PASSWORD: root
+    networks:
+      - my-bridge
+
+  mysql:
+    image: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: wordpress
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - my-bridge
+
+volumes:
+  mysql-data:
+
+networks:
+  my-bridge:
+    driver: bridge
+```
+
+* docker-compose文件的版本：
+  - Version3(常用并推荐)
+  - Version2(也在用) 
+  - Version2只能用于单机，Version3可以用于多机；
+
+* linux安装docker-compose：
+
+```bash
+curl -L https://github.com/docker/compose/releases/download/1.24.0-rc1/docker-compose-`uname -s`-`uname -m` -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+
+# 网络太慢，自己下载了复制进去；
+[vagrant@docker-node1 ~]$ sudo cp docker-compose-Linux-x86_64 /usr/local/bin/docker-compose
+[vagrant@docker-node1 ~]$ sudo chmod +x /usr/local/bin/docker-compose
+[vagrant@docker-node1 ~]$ docker-compose --version
+docker-compose version 1.24.0-rc1, build 0f3d4dda
+```
+
+* docker-compose up ： debug模式，若要其在后台运行，加-d选项；
+
+```bash
+# 根据指定的yaml文件创建并启动容器，文件名默认就是docker-compose.yml,可以省略；
+[vagrant@docker-node1 wordpress]$ docker-compose -f docker-compose.yml up
+Creating network "wordpress_my-bridge" with driver "bridge"
+Creating volume "wordpress_mysql-data" with default driver
+Creating wordpress_wordpress_1 ... done
+Creating wordpress_mysql_1     ... done
+Attaching to wordpress_wordpress_1, wordpress_mysql_1
+wordpress_1  | WordPress not found in /var/www/html - copying now...
+mysql_1      | Initializing database
+......
+```
+
+* docker-compose ps : 查看通过docker-compose启动的容器及其状态；
+* docker-compose stop ： 停止services；
+* docker-compose down ： 停止并删除containers，networks，images和volumes；
+* docker-compose start : 启动services；
+* docker-compose images ： 列出docker-compose运行的容器和镜像；
+* docker-compose exec  ： 在指定的service上执行命令，如docker-compose exec mysql bash
+
+```bash
+[vagrant@docker-node1 flask-redis]$ cat docker-compose.yml
+version: "3"
+
+services:
+
+  redis:
+    image: redis
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - 8080:5000
+    environment:
+      REDIS_HOST: redis
+
+[vagrant@docker-node1 flask-redis]$ docker-compose up -d
+Creating network "flask-redis_default" with the default driver
+Creating flask-redis_redis_1 ... done
+Creating flask-redis_web_1   ... done
+
+[vagrant@docker-node1 flask-redis]$ docker-compose ps
+       Name                      Command               State           Ports
+-------------------------------------------------------------------------------------
+flask-redis_redis_1   docker-entrypoint.sh redis ...   Up      6379/tcp
+flask-redis_web_1     python app.py                    Up      0.0.0.0:8080->5000/tcp
+
+# docker-compose scale 扩展container数量；
+[vagrant@docker-node1 flask-redis]$ docker-compose scale --help
+Set number of containers to run for a service.
+
+Numbers are specified in the form `service=num` as arguments.
+For example:
+
+    $ docker-compose scale web=2 worker=3
+
+This command is deprecated. Use the up command with the `--scale` flag
+instead.
+
+Usage: scale [options] [SERVICE=NUM...]
+
+Options:
+  -t, --timeout TIMEOUT      Specify a shutdown timeout in seconds.
+                             (default: 10)
+
+[vagrant@docker-node1 flask-redis]$ cat docker-compose.yml
+version: "3"
+
+services:
+
+  redis:
+    image: redis
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      REDIS_HOST: redis
+
+[vagrant@docker-node1 flask-redis]$ docker-compose up -d
+Creating network "flask-redis_default" with the default driver
+Creating flask-redis_redis_1 ... done
+Creating flask-redis_web_1   ... done
+
+[vagrant@docker-node1 flask-redis]$ docker-compose ps
+       Name                      Command               State    Ports
+-----------------------------------------------------------------------
+flask-redis_redis_1   docker-entrypoint.sh redis ...   Up      6379/tcp
+flask-redis_web_1     python app.py                    Up      5000/tcp
+
+[vagrant@docker-node1 flask-redis]$ docker-compose up --scale web=3 -d
+flask-redis_redis_1 is up-to-date
+Starting flask-redis_web_1 ... done
+Creating flask-redis_web_2 ... done
+Creating flask-redis_web_3 ... done
+
+[vagrant@docker-node1 flask-redis]$ docker-compose ps
+       Name                      Command               State    Ports
+-----------------------------------------------------------------------
+flask-redis_redis_1   docker-entrypoint.sh redis ...   Up      6379/tcp
+flask-redis_web_1     python app.py                    Up      5000/tcp
+flask-redis_web_2     python app.py                    Up      5000/tcp
+flask-redis_web_3     python app.py                    Up      5000/tcp
+```
+
+#### 使用docker-compose scale 实现负载均衡：
+
+```bash
+[vagrant@docker-node1 lb-scale]$ pwd
+/home/vagrant/chapter6/labs/lb-scale
+[vagrant@docker-node1 lb-scale]$ ls
+app.py  docker-compose.yml  Dockerfile
+[vagrant@docker-node1 lb-scale]$ cat docker-compose.yml
+```
+
+```yaml
+version: "3"
+
+services:
+
+  redis:
+    image: redis
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      REDIS_HOST: redis
+
+  lb:
+    image: dockercloud/haproxy
+    links:
+      - web
+    ports:
+      - 8080:80
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+```python
+[vagrant@docker-node1 lb-scale]$ cat app.py
+from flask import Flask
+from redis import Redis
+import os
+import socket
+
+app = Flask(__name__)
+redis = Redis(host=os.environ.get('REDIS_HOST', '127.0.0.1'), port=6379)
+
+
+@app.route('/')
+def hello():
+    redis.incr('hits')
+    return 'Hello Container World! I have been seen %s times and my hostname is %s.\n' % (redis.get('hits'),socket.gethostname())
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=80, debug=True)
+```
+
+```dockerfile
+[vagrant@docker-node1 lb-scale]$ cat Dockerfile
+FROM python:2.7
+LABEL maintaner="Peng Xiao xiaoquwl@gmail.com"
+COPY . /app
+WORKDIR /app
+RUN pip install flask redis
+EXPOSE 80
+CMD [ "python", "app.py" ]
+```
+
+```bash
+# 启动容器：
+[vagrant@docker-node1 lb-scale]$ docker-compose up -d
+Starting lb-scale_web_1   ... done
+Starting lb-scale_redis_1 ... done
+Starting lb-scale_lb_1    ... done
+[vagrant@docker-node1 lb-scale]$ docker-compose ps
+      Name                    Command               State                    Ports
+---------------------------------------------------------------------------------------------------
+lb-scale_lb_1      /sbin/tini -- dockercloud- ...   Up      1936/tcp, 443/tcp, 0.0.0.0:8080->80/tcp
+lb-scale_redis_1   docker-entrypoint.sh redis ...   Up      6379/tcp
+lb-scale_web_1     python app.py                    Up      80/tcp
+
+# 只有一个web容器的情况下访问HAProxy：
+[vagrant@docker-node1 lb-scale]$ curl 127.0.0.1:8080
+Hello Container World! I have been seen 1 times and my hostname is 805d6d713215.
+
+# 将web容器的数量扩展到3个：
+[vagrant@docker-node1 lb-scale]$ docker-compose up --scale web=3 -d
+Starting lb-scale_web_1 ... done
+lb-scale_redis_1 is up-to-date
+Creating lb-scale_web_2 ... done
+Creating lb-scale_web_3 ... done
+lb-scale_lb_1 is up-to-date
+
+# 扩展后，访问HAProxy，采用轮训的方式负载均衡；
+[vagrant@docker-node1 lb-scale]$ curl 127.0.0.1:8080
+Hello Container World! I have been seen 2 times and my hostname is 805d6d713215.
+[vagrant@docker-node1 lb-scale]$ curl 127.0.0.1:8080
+Hello Container World! I have been seen 3 times and my hostname is d50126cbbcc0.
+[vagrant@docker-node1 lb-scale]$ curl 127.0.0.1:8080
+Hello Container World! I have been seen 4 times and my hostname is 420471bba9a4.
+[vagrant@docker-node1 lb-scale]$ curl 127.0.0.1:8080
+Hello Container World! I have been seen 5 times and my hostname is 805d6d713215.
+
+[vagrant@docker-node1 lb-scale]$ docker-compose up --scale web=5 -d
+Starting lb-scale_web_1 ...
+Starting lb-scale_web_1 ... done
+Starting lb-scale_web_2 ... done
+Starting lb-scale_web_3 ... done
+Creating lb-scale_web_4 ... done
+Creating lb-scale_web_5 ... done
+lb-scale_lb_1 is up-to-date
+
+[vagrant@docker-node1 lb-scale]$ for i in `seq 10`; do curl 127.0.0.1:8080; done
+Hello Container World! I have been seen 6 times and my hostname is 805d6d713215.
+Hello Container World! I have been seen 7 times and my hostname is d50126cbbcc0.
+Hello Container World! I have been seen 8 times and my hostname is 420471bba9a4.
+Hello Container World! I have been seen 9 times and my hostname is 7fb9e24eb0f5.
+Hello Container World! I have been seen 10 times and my hostname is 0f1672a524da.
+Hello Container World! I have been seen 11 times and my hostname is 805d6d713215.
+Hello Container World! I have been seen 12 times and my hostname is d50126cbbcc0.
+Hello Container World! I have been seen 13 times and my hostname is 420471bba9a4.
+Hello Container World! I have been seen 14 times and my hostname is 7fb9e24eb0f5.
+Hello Container World! I have been seen 15 times and my hostname is 0f1672a524da.
+
+# 向下扩展(减少):
+[vagrant@docker-node1 lb-scale]$ docker-compose up --scale web=3 -d
+Stopping and removing lb-scale_web_4 ...
+Stopping and removing lb-scale_web_4 ... done
+Stopping and removing lb-scale_web_5 ... done
+Starting lb-scale_web_1              ... done
+Starting lb-scale_web_2              ... done
+Starting lb-scale_web_3              ... done
+lb-scale_lb_1 is up-to-date
+[vagrant@docker-node1 lb-scale]$ docker-compose ps
+      Name                    Command               State                    Ports
+---------------------------------------------------------------------------------------------------
+lb-scale_lb_1      /sbin/tini -- dockercloud- ...   Up      1936/tcp, 443/tcp, 0.0.0.0:8080->80/tcp
+lb-scale_redis_1   docker-entrypoint.sh redis ...   Up      6379/tcp
+lb-scale_web_1     python app.py                    Up      80/tcp
+lb-scale_web_2     python app.py                    Up      80/tcp
+lb-scale_web_3     python app.py                    Up      80/tcp
+```
+
+* 在多台Docker-host组成的docker cluster中进行scale up？ 后续研究。
+
+#### 示例： 使用docker-compose部署一个复杂的投票应用：
+
+![voting_architecture](images/voting_architecture.png)
+
+```bash
+[vagrant@docker-node1 example-voting-app]$ pwd
+/home/vagrant/chapter6/labs/example-voting-app
+[vagrant@docker-node1 example-voting-app]$ ls
+architecture.png  docker-compose.yml  README.md  result-app  voting-app  worker
+[vagrant@docker-node1 example-voting-app]$ cat docker-compose.yml
+version: "3"
+
+services:
+  voting-app:
+    build: ./voting-app/.
+    volumes:
+     - ./voting-app:/app
+    ports:
+      - "5000:80"
+    links:
+      - redis
+    networks:
+      - front-tier
+      - back-tier
+
+  result-app:
+    build: ./result-app/.
+    volumes:
+      - ./result-app:/app
+    ports:
+      - "5001:80"
+    links:
+      - db
+    networks:
+      - front-tier
+      - back-tier
+
+  worker:
+    build: ./worker
+    links:
+      - db
+      - redis
+    networks:
+      - back-tier
+
+  redis:
+    image: redis
+    ports: ["6379"]
+    networks:
+      - back-tier
+
+  db:
+    image: postgres:9.4
+    volumes:
+      - "db-data:/var/lib/postgresql/data"
+    networks:
+      - back-tier
+
+volumes:
+  db-data:
+
+networks:
+  front-tier:
+  back-tier:
+```
+
+* docker-compose up -d   即可运行；
+* docker-compose build  ==> docker-compose up : 先将Dockerfile构建成image再启动容器；
+
+`docker-compose一般用于开发环境，一般不会用于生产环境.`
+
+---
+
+## 第七章：容器编排： Docker Swarm(内置于docker)
+
+* 到处都使用容器==麻烦来了
+  - 怎么去管理这么多容器？
+  - 怎么能方便的横向扩展？
+  - 如果容器down了，怎么能自动恢复？
+  - 如何去更新容器而不影响业务？
+  - 如何去监控追踪这些容器？
+  - 怎么去调度容器的创建？
+  - 保护隐私数据？
+
+![swarm_mode](images/swarm_mode.png)
+
+* Swarm中，节点的两种角色：
+  - Manager：集群的大脑，必须避免单点故障； 使用分布式状态存储：Raft；
+  - Worker： 实际上的工作节点，容器多数部署在worker节点上；Gossip network；
+
+![swarm_mode_architecture](images/swarm_mode_architecture.png)
+
+![swarm_service_replicas](images/swarm_service_replicas.png)
+
+![swarm服务创建和调度](images/swarm服务创建和调度.png)
+
+### 创建一个3节点的docker swarm集群：
+
+* 3 nodes swarm cluster setup：
+  - Vagrant + Virtualbox
+  - Docker Machine + Virtualbox
+  - Play with docker https://labs.play-with-docker.com/
+
+* Vagrant + Virtualbox 
+
+    三台虚拟机信息如下：
+
+        hostname: swarm-manager ip: 192.168.1.100
+        hostname: swarm-worker1 ip: 192.168.1.101
+        hostname: swarm-worker2 ip: 192.168.1.102
+
+    三台虚拟机都已安装docker-ce
+
+```bash
+# 初始化swarm，该命令需要在manager节点上执行；
+[vagrant@swarm-manager ~]$ docker swarm init --advertise-addr 192.168.1.100
+Swarm initialized: current node (tf0lijdijkthkvtk973qxyvlv) is now a manager.
+
+To add a worker to this swarm, run the following command:
+# 加入worker节点到swarm集群中，使用下面的命令；
+    docker swarm join --token SWMTKN-1-0ts0hjlnsqch4962q9m0d8erduhqbzfnxaympe37n2alsq8iwh-1f45qtwoslfqur0zj4p8a4vf5 192.168.1.100:2377
+
+To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.
+# 加入manager节点： docker swarm join-token manager
+
+
+# 添加worker1：
+[vagrant@swarm-worker1 ~]$ docker swarm join --token SWMTKN-1-0ts0hjlnsqch4962q9m0d8erduhqbzfnxaympe37n2alsq8iwh-1f45qtwoslfqur0zj4p8a4vf5 192.168.1.100:2377
+This node joined a swarm as a worker.
+
+# 添加worker2：
+[vagrant@swarm-worker2 ~]$ docker swarm join --token SWMTKN-1-0ts0hjlnsqch4962q9m0d8erduhqbzfnxaympe37n2alsq8iwh-1f45qtwoslfqur0zj4p8a4vf5 192.168.1.100:2377
+This node joined a swarm as a worker.
+
+# 查看cluster的节点信息：
+[vagrant@swarm-manager ~]$ docker node ls
+ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
+tf0lijdijkthkvtk973qxyvlv *   swarm-manager       Ready               Active              Leader              18.09.3
+o9rg5ba7px9uktl85o79886ia     swarm-worker1       Ready               Active                                  18.09.3
+6iewsdj1azj15xdu14k1vc8iu     swarm-worker2       Ready               Active                                  18.09.3
+```
+
+### swarm的操作：
+
+* service： container：
+
+        docker service  --help
+
+```bash
+# 在dockerswarm mode下，运行容器(container|service)不再使用docker run，而是docker service create
+
+[vagrant@swarm-manager ~]$ docker service create --name demo busybox sh -c "while true; do sleep 3600;done"
+wk6fwkya4ah0buol5gihkd7ab
+overall progress: 1 out of 1 tasks
+1/1: running   [==================================================>]
+verify: Service converged
+
+[vagrant@swarm-manager ~]$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+wk6fwkya4ah0        demo                replicated          1/1                 busybox:latest
+# MODE：replicated，说明可扩展；
+
+[vagrant@swarm-manager ~]$ docker service ps demo
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE                ERROR               PORTS
+sj717gubyji9        demo.1              busybox:latest      swarm-worker2       Running             Running about a minute ago
+
+# 扩展service demo：
+[vagrant@swarm-manager ~]$ docker service scale demo=5
+demo scaled to 5
+overall progress: 5 out of 5 tasks
+1/5: running   [==================================================>]
+2/5: running   [==================================================>]
+3/5: running   [==================================================>]
+4/5: running   [==================================================>]
+5/5: running   [==================================================>]
+verify: Service converged
+[vagrant@swarm-manager ~]$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+wk6fwkya4ah0        demo                replicated          5/5                 busybox:latest
+[vagrant@swarm-manager ~]$ docker service ps demo
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+sj717gubyji9        demo.1              busybox:latest      swarm-worker2       Running             Running 4 minutes ago
+ixual1bpola8        demo.2              busybox:latest      swarm-manager       Running             Running 22 seconds ago
+mbqscavtffre        demo.3              busybox:latest      swarm-manager       Running             Running 22 seconds ago
+4r5ko90hma8a        demo.4              busybox:latest      swarm-worker2       Running             Running 56 seconds ago
+wpc3blz1hjo2        demo.5              busybox:latest      swarm-worker1       Running             Running 47 seconds ago
+
+# swarm-worker2上强制删除其中一个service：
+[vagrant@swarm-worker2 ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS               NAMES
+78b69d20b888        busybox:latest      "sh -c 'while true; 鈥?"   4 minutes ago       Up 4 minutes                            demo.4.4r5ko90hma8abzsgafqiuljn4
+73c7ecc40523        busybox:latest      "sh -c 'while true; 鈥?"   7 minutes ago       Up 7 minutes                            demo.1.sj717gubyji9x998cvgkmprqz
+[vagrant@swarm-worker2 ~]$ docker rm -f 78b69d20b888
+78b69d20b888
+[vagrant@swarm-worker2 ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS               NAMES
+73c7ecc40523        busybox:latest      "sh -c 'while true; 鈥?"   8 minutes ago       Up 8 minutes                            demo.1.sj717gubyji9x998cvgkmprqz
+
+[vagrant@swarm-manager ~]$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+wk6fwkya4ah0        demo                replicated          5/5                 busybox:latest
+[vagrant@swarm-manager ~]$ docker service ps demo
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR                         PORTS
+sj717gubyji9        demo.1              busybox:latest      swarm-worker2       Running             Running 8 minutes ago
+ixual1bpola8        demo.2              busybox:latest      swarm-manager       Running             Running 4 minutes ago
+mbqscavtffre        demo.3              busybox:latest      swarm-manager       Running             Running 4 minutes ago
+iv31mzi13rgo        demo.4              busybox:latest      swarm-worker1       Running             Running 23 seconds ago
+4r5ko90hma8a         \_ demo.4          busybox:latest      swarm-worker2       Shutdown            Failed 21 seconds ago    "task: non-zero exit (137)"
+wpc3blz1hjo2        demo.5              busybox:latest      swarm-worker1       Running             Running 4 minutes ago
+# scale不仅能横向扩展，而且还能保证一定数量的service在running状态，发现有service处于shutdown状态，它就会在集群中的节点上增加service；
+
+
+# docker swarm 删除service：
+[vagrant@swarm-manager ~]$ docker service rm demo
+demo
+[vagrant@swarm-manager ~]$ docker service ps demo
+no such service: demo
+# 执行上述删除命令到 swarm node 删除实际运行的container需要那么一点点时间；
+```
+
+* 实验：在docker swarm中部署WordPress；
+
+```bash
+# 为了使得两个跨主机的container能够通信，需要创建-个overlay的网络驱动；
+[vagrant@swarm-manager ~]$ docker network create -d overlay demo
+2u0oa8vha2b09c7u6gzuus1zv
+[vagrant@swarm-manager ~]$ docker network ls
+NETWORK ID          NAME                DRIVER              SCOPE
+6daf15865a1c        bridge              bridge              local
+2u0oa8vha2b0        demo                overlay             swarm
+c4e9598bad4a        docker_gwbridge     bridge              local
+bc989d33fb56        host                host                local
+l91saqatrypt        ingress             overlay             swarm
+7be6e7efd76b        none                null                local
+
+# 创建mysql service：
+[vagrant@swarm-manager ~]$  docker service create --name mysql --env MYSQL_ROOT_PASSWORD=root --env MYSQL_DATABASE=wordpress --network demo --mount type=volume,source=mysql-data,destination=/var/lib/mysql mysql
+qyh5yldeo3y2jcs6mtiw4hj7d
+overall progress: 0 out of 1 tasks
+overall progress: 0 out of 1 tasks
+overall progress: 1 out of 1 tasks
+1/1: running   [==================================================>]
+verify: Service converged
+
+[vagrant@swarm-manager ~]$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+qyh5yldeo3y2        mysql               replicated          1/1                 mysql:latest
+[vagrant@swarm-manager ~]$ docker service ps mysql
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE                ERROR               PORTS
+l2jqwy0ctt9b        mysql.1             mysql:latest        swarm-worker2       Running             Running about a minute ago
+
+# 创建WordPress service：
+[vagrant@swarm-manager ~]$ docker service create --name wordpress -p 80:80 --env WORDPRESS_DB_PASSWORD=root --env WORDPRESS_DB_HOST=mysql --network demo wordpress
+idrg39s2sneq8gjqga7sl317w
+overall progress: 1 out of 1 tasks
+1/1: running   [==================================================>]
+verify: Service converged
+[vagrant@swarm-manager ~]$ docker service ps wordpress
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE              ERROR                       PORTS
+j5eaqb2nuyl6        wordpress.1         wordpress:latest    swarm-manager       Running             Preparing 24 seconds ago
+ueswxt3ipl8p         \_ wordpress.1     wordpress:latest    swarm-worker1       Shutdown            Failed 24 seconds ago      "task: non-zero exit (1)"
+# 此时的WordPress service 运行在节点swarm-manager上；
+
+# 通过浏览器完成安装配置后，使用swarm集群中任意节点的IP地址加端口都能访问WordPress服务。
+# 原因看后续；
+```
+
+![swarm_DNS服务发现](images/swarm_DNS服务发现.png)
+
+```bash
+[vagrant@swarm-manager ~]$ docker service create --name whoami -p 8000:8000 --network demo -d jwilder/whoami
+image jwilder/whoami:latest could not be accessed on a registry to record
+its digest. Each node will access jwilder/whoami:latest independently,
+possibly leading to different nodes running different
+versions of the image.
+
+onddwjp2vj5qkhx4b95nn8ccg
+
+[vagrant@swarm-manager ~]$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                   PORTS
+kx65z1nvkkg7        mysql               replicated          1/1                 mysql:latest
+onddwjp2vj5q        whoami              replicated          1/1                 jwilder/whoami:latest   *:8000->8000/tcp
+t3tqgf1c4x16        wordpress           replicated          0/1                 wordpress:latest        *:80->80/tcp
+
+[vagrant@swarm-manager ~]$ docker service ps whoami
+ID                  NAME                IMAGE                   NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+rzjf16quyr5b        whoami.1            jwilder/whoami:latest   swarm-worker1       Running             Running 10 seconds ago
+
+[vagrant@swarm-worker1 ~]$ docker ps
+CONTAINER ID        IMAGE                   COMMAND                  CREATED              STATUS              PORTS               NAMES
+8f9a77b4a73a        wordpress:latest        "docker-entrypoint.s鈥?"   7 seconds ago        Up 1 second         80/tcp              wordpress.1.clj1fmonps2jzharxdgst6vdq
+a5aebc09f6a4        jwilder/whoami:latest   "/app/http"              About a minute ago   Up About a minute   8000/tcp            whoami.1.rzjf16quyr5btt3u54tyq0srk
+[vagrant@swarm-worker1 ~]$ curl 127.0.0.1:8000
+I'm a5aebc09f6a4'
+
+
+[vagrant@swarm-manager ~]$ docker service create --name client -d --network demo busybox sh -c "while true; do sleep 3600; done"
+image busybox:latest could not be accessed on a registry to record
+its digest. Each node will access busybox:latest independently,
+possibly leading to different nodes running different
+versions of the image.
+
+ejaiwh2wtec5shc66ggb7vbpu
+
+[vagrant@swarm-manager ~]$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                   PORTS
+ejaiwh2wtec5        client              replicated          1/1                 busybox:latest
+kx65z1nvkkg7        mysql               replicated          1/1                 mysql:latest
+onddwjp2vj5q        whoami              replicated          1/1                 jwilder/whoami:latest   *:8000->8000/tcp
+t3tqgf1c4x16        wordpress           replicated          0/1                 wordpress:latest        *:80->80/tcp
+[vagrant@swarm-manager ~]$ docker service ps client
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+oq1ulbhffvs9        client.1            busybox:latest      swarm-worker2       Running             Running 37 seconds ago
+
+
+[vagrant@swarm-worker2 ~]$ docker exec -it bfb0 sh
+/ # ping whoami
+PING whoami (10.0.0.118): 56 data bytes
+64 bytes from 10.0.0.118: seq=0 ttl=64 time=0.122 ms
+64 bytes from 10.0.0.118: seq=1 ttl=64 time=0.092 ms
+64 bytes from 10.0.0.118: seq=2 ttl=64 time=0.224 ms
+64 bytes from 10.0.0.118: seq=3 ttl=64 time=0.245 ms
+64 bytes from 10.0.0.118: seq=4 ttl=64 time=0.236 ms
+^C
+--- whoami ping statistics ---
+5 packets transmitted, 5 packets received, 0% packet loss
+round-trip min/avg/max = 0.092/0.183/0.245 ms
+
+# 扩展service whoami：
+[vagrant@swarm-manager ~]$ docker service scale whoami=2
+whoami scaled to 2
+overall progress: 2 out of 2 tasks
+1/2: running   [==================================================>]
+2/2: running   [==================================================>]
+verify: Service converged
+[vagrant@swarm-manager ~]$ docker service ps whoami
+ID                  NAME                IMAGE                   NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+rzjf16quyr5b        whoami.1            jwilder/whoami:latest   swarm-worker1       Running             Running 7 minutes ago
+bd9e6jsu1c3z        whoami.2            jwilder/whoami:latest   swarm-worker2       Running             Running 15 seconds ago
+
+[vagrant@swarm-worker2 ~]$ docker exec -it bfb0 sh
+/ # ping whoami
+PING whoami (10.0.0.118): 56 data bytes
+64 bytes from 10.0.0.118: seq=0 ttl=64 time=0.138 ms
+64 bytes from 10.0.0.118: seq=1 ttl=64 time=0.092 ms
+64 bytes from 10.0.0.118: seq=2 ttl=64 time=0.251 ms
+64 bytes from 10.0.0.118: seq=3 ttl=64 time=0.250 ms
+# whoami 返回的地址依然不变：
+
+# 此处返回的10.0.0.118，是一个VIP(Virtual IP)，在service whoami做了scale之后，在他们之间共用；该VIP并不作为任何一个whoami service的ip地址使用；
+
+# docker swarm创建一个service时，都会使用一个VIP，方便扩展；
+# 该VIP会与实际运行的container 的ip之间进行mapping；
+# 使得使用scale扩展的一组服务可以成功的实现LB的功能，底层使用LVS实现；
+```
+
+#### Routing Mesh的两种体现：
+
+* Internal——Container和Container之间的访问通过overlay网络(通过VIP虚拟IP)
+
+* Ingress——如果服务有绑定端口，则此服务可以通过任意swarm节点的相应端口访问；
+
+![swarm_Internal_Load_Balancing](images/swarm_Internal_Load_Balancing.png)
+
+![swarm_Internal_Load_Balancing.png_2](images/swarm_Internal_Load_Balancing.png_2.png)
+
+
+* Ingress Network
+  - 外部访问的负载均衡；
+  - 服务端口被暴露到各个swarm节点
+  - 内部通过IPVS进行负载均衡；
+
+![Swarm_Ingress_Network](images/Swarm_Ingress_Network.png)
+
+
+
+
+
+
+
 第八章：DevOps初体验——Docker Cloud和Docker企业版
+
 第九章：容器编排Kubernetes
+
 第十章：容器的运维和监控
+
 第十一章：Docker+DevOps实战——过程和工具
+
 第十二章：总结
 
 
