@@ -3066,15 +3066,1139 @@ PING whoami (10.0.0.118): 56 data bytes
 
 ![Swarm_Ingress_Network](images/Swarm_Ingress_Network.png)
 
+```bash
+[vagrant@swarm-manager ~]$
+[vagrant@swarm-manager ~]$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE                   PORTS
+ejaiwh2wtec5        client              replicated          1/1                 busybox:latest
+onddwjp2vj5q        whoami              replicated          2/2                 jwilder/whoami:latest   *:8000->8000/tcp
+
+[vagrant@swarm-manager ~]$ docker service ps whoami
+ID                  NAME                IMAGE                   NODE                DESIRED STATE       CURRENT STATE               ERROR               PORTS
+rzjf16quyr5b        whoami.1            jwilder/whoami:latest   swarm-worker1       Running             Running about an hour ago
+bd9e6jsu1c3z        whoami.2            jwilder/whoami:latest   swarm-worker2       Running             Running 45 minutes ago
+# whoami 的scale为2， 分别在swarm-worker1和swarm-worker2上；
+
+# 在worker1上：
+[vagrant@swarm-worker1 ~]$ docker ps
+CONTAINER ID        IMAGE                   COMMAND             CREATED             STATUS              PORTS               NAMES
+a5aebc09f6a4        jwilder/whoami:latest   "/app/http"         About an hour ago   Up About an hour    8000/tcp            whoami.1.rzjf16quyr5btt3u54tyq0srk
+[vagrant@swarm-worker1 ~]$ curl 127.0.0.1:8000
+I'm 826aa6ea9879     '
+
+# 在worker2上：
+[vagrant@swarm-worker2 ~]$ docker ps
+CONTAINER ID        IMAGE                   COMMAND                  CREATED             STATUS              PORTS               NAMES
+826aa6ea9879        jwilder/whoami:latest   "/app/http"              About an hour ago   Up About an hour    8000/tcp            whoami.2.bd9e6jsu1c3z35jjynvv5er5n
+[vagrant@swarm-worker2 ~]$ curl 127.0.0.1:8000
+I'm 826aa6ea9879          '
+
+# 在manager上：
+[vagrant@swarm-manager ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS               NAMES
+[vagrant@swarm-manager ~]$ curl 127.0.0.1:8000
+I'm 826aa6ea9879         '
+# 在manager上根本没有运行whoami的service，也没有对外发布8000端口，但是依然能访问；
+# 查看原因：
+
+# 查看iptables：
+[vagrant@swarm-manager ~]$ sudo iptables -nL -t nat
+Chain PREROUTING (policy ACCEPT)
+target     prot opt source               destination
+DOCKER-INGRESS  all  --  0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL
+DOCKER     all  --  0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL
+
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination
+DOCKER-INGRESS  all  --  0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL
+DOCKER     all  --  0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL
+
+Chain POSTROUTING (policy ACCEPT)
+target     prot opt source               destination
+MASQUERADE  all  --  0.0.0.0/0            0.0.0.0/0            ADDRTYPE match src-type LOCAL
+MASQUERADE  all  --  172.17.0.0/16        0.0.0.0/0
+MASQUERADE  all  --  172.18.0.0/16        0.0.0.0/0
+
+Chain DOCKER (2 references)
+target     prot opt source               destination
+RETURN     all  --  0.0.0.0/0            0.0.0.0/0
+RETURN     all  --  0.0.0.0/0            0.0.0.0/0
+
+Chain DOCKER-INGRESS (2 references)
+target     prot opt source               destination
+DNAT       tcp  --  0.0.0.0/0            0.0.0.0/0            tcp dpt:8000 to:172.18.0.2:8000
+RETURN     all  --  0.0.0.0/0            0.0.0.0/0
+# 此处显示将目标端口是8000的数据，都转发给172.18.0.2:8000
+
+# 查找172.18.0.2所在的网络：
+[vagrant@swarm-manager ~]$ ip addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host
+       valid_lft forever preferred_lft forever
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000
+    link/ether 52:54:00:75:dc:3d brd ff:ff:ff:ff:ff:ff
+    inet 10.0.2.15/24 brd 10.0.2.255 scope global noprefixroute dynamic eth0
+       valid_lft 77699sec preferred_lft 77699sec
+    inet6 fe80::5054:ff:fe75:dc3d/64 scope link
+       valid_lft forever preferred_lft forever
+3: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000
+    link/ether 08:00:27:73:55:32 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.1.100/24 brd 192.168.1.255 scope global noprefixroute eth1
+       valid_lft forever preferred_lft forever
+    inet6 fe80::a00:27ff:fe73:5532/64 scope link
+       valid_lft forever preferred_lft forever
+4: docker0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN group default
+    link/ether 02:42:46:67:81:db brd ff:ff:ff:ff:ff:ff
+    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
+       valid_lft forever preferred_lft forever
+    inet6 fe80::42:46ff:fe67:81db/64 scope link
+       valid_lft forever preferred_lft forever
+# 172.10.8.1/16,docker_gwbridge
+9: docker_gwbridge: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default
+    link/ether 02:42:53:5c:28:60 brd ff:ff:ff:ff:ff:ff
+    inet 172.18.0.1/16 brd 172.18.255.255 scope global docker_gwbridge
+       valid_lft forever preferred_lft forever
+    inet6 fe80::42:53ff:fe5c:2860/64 scope link
+       valid_lft forever preferred_lft forever
+21: vethf975d3e@if20: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue master docker_gwbridge state UP group default
+    link/ether 8e:ff:f7:ce:fd:62 brd ff:ff:ff:ff:ff:ff link-netnsid 1
+    inet6 fe80::8cff:f7ff:fece:fd62/64 scope link
+       valid_lft forever preferred_lft forever
+
+# 查看 桥接网络的连接情况：
+[vagrant@swarm-manager ~]$ brctl show
+bridge name     bridge id               STP enabled     interfaces
+docker0         8000.0242466781db       no
+docker_gwbridge         8000.0242535c2860       no              vethf975d3e
+
+[vagrant@swarm-manager ~]$ docker network inspect docker_gwbridge
+[
+    {
+        "Name": "docker_gwbridge",
+        "Id": "c4e9598bad4ae245cbc8b3e0f0a0ad2e7543338397d964874f74c39b69ab9eaf",
+        "Created": "2019-03-09T01:21:37.243442018Z",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": [
+                {
+                    "Subnet": "172.18.0.0/16",
+                    "Gateway": "172.18.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Containers": {
+            # iptables中转发到了这里的172.18.0.2:8000
+            # ingress-sbox是一个namespace：
+            "ingress-sbox": {
+                "Name": "gateway_ingress-sbox",
+                "EndpointID": "5fb04282bbfa82bfc8093b2e6f94addc198d4ca5c70221c23aec29f5e7577ef2",
+                "MacAddress": "02:42:ac:12:00:02",
+                "IPv4Address": "172.18.0.2/16",
+                "IPv6Address": ""
+            }
+        },
+        "Options": {
+            "com.docker.network.bridge.enable_icc": "false",
+            "com.docker.network.bridge.enable_ip_masquerade": "true",
+            "com.docker.network.bridge.name": "docker_gwbridge"
+        },
+        "Labels": {}
+    }
+]
+
+
+# 查看namespace：
+[vagrant@swarm-manager ~]$ sudo ls /var/run/docker/netns
+1-l91saqatry  ingress_sbox
+
+[vagrant@swarm-manager ~]$ sudo nsenter --net=/var/run/docker/netns/ingress_sbox
+# 进入了指定的namespace，注意提示符的变化；
+[root@swarm-manager vagrant]# ip addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+18: eth0@if19: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1450 qdisc noqueue state UP group default
+    link/ether 02:42:0a:ff:00:02 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 10.255.0.2/16 brd 10.255.255.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet 10.255.0.53/32 brd 10.255.0.53 scope global eth0
+       valid_lft forever preferred_lft forever
+20: eth1@if21: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default
+    link/ether 02:42:ac:12:00:02 brd ff:ff:ff:ff:ff:ff link-netnsid 1
+    inet 172.18.0.2/16 brd 172.18.255.255 scope global eth1
+       valid_lft forever preferred_lft forever
+# 此时再namespace：ingress_sbox中，查看到的IP地址是172.18.0.2
+```
+
+![swarm_Ingress_Network的数据包走向详情](images/swarm_Ingress_Network的数据包走向详情.jpg)
+
+
+```bash
+[root@swarm-manager vagrant]# iptables -nL -t mangle
+Chain PREROUTING (policy ACCEPT)
+target     prot opt source               destination
+MARK       tcp  --  0.0.0.0/0            0.0.0.0/0            tcp dpt:8000 MARK set 0x151
+# 此处对目标端口为8000的数据做了 标记；
+
+
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination
+MARK       all  --  0.0.0.0/0            10.255.0.53          MARK set 0x151
+
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination
+
+Chain POSTROUTING (policy ACCEPT)
+target     prot opt source               destination
+
+# 安装ipvsadm：
+[vagrant@swarm-manager ~]$ sudo yum install -y ipvsadm
+
+[vagrant@swarm-manager ~]$ sudo nsenter --net=/var/run/docker/netns/ingress_sbox
+[root@swarm-manager vagrant]# iptables -nL -t mangle
+Chain PREROUTING (policy ACCEPT)
+target     prot opt source               destination
+MARK       tcp  --  0.0.0.0/0            0.0.0.0/0            tcp dpt:8000 MARK set 0x151
+
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination
+MARK       all  --  0.0.0.0/0            10.255.0.53          MARK set 0x151
+
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination
+
+Chain POSTROUTING (policy ACCEPT)
+target     prot opt source               destination
+
+[root@swarm-manager vagrant]# ipvsadm -l
+IP Virtual Server version 1.2.1 (size=4096)
+Prot LocalAddress:Port Scheduler Flags
+  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
+FWM  337 rr
+  -> 10.255.0.54:0                Masq    1      0          0
+  -> 10.255.0.68:0                Masq    1      0          0
+# 将之前标记的目标端口为8000的数据包，负载均衡到这两个IP地址，这两个IP地址则是实际运行whoami的容器的ip。
+
+[vagrant@swarm-worker1 ~]$ docker exec a5aebc09f6a4 ip addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+240: eth1@if241: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1450 qdisc noqueue state UP
+    link/ether 02:42:0a:ff:00:36 brd ff:ff:ff:ff:ff:ff
+    inet 10.255.0.54/16 brd 10.255.255.255 scope global eth1
+       valid_lft forever preferred_lft forever
+    # 10.255.0.54在worker1节点上的容器中；
+
+[vagrant@swarm-worker2 ~]$ docker exec 826aa6ea9879 ip addr
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+153: eth1@if154: <BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN> mtu 1450 qdisc noqueue state UP
+    link/ether 02:42:0a:ff:00:44 brd ff:ff:ff:ff:ff:ff
+    inet 10.255.0.68/16 brd 10.255.255.255 scope global eth1
+       valid_lft forever preferred_lft forever
+    # 10.255.0.68在worker2节点上的容器中；
+```
+
+---
+
+* DockerStack部署WordPress：
+
+    compose-file的deploy命令：仅支持Version3；
+
+```yaml
+version: "3.3"
+
+services:
+  wordpress:
+    image: wordpress
+    ports:
+      - "8080:80"
+    networks:
+      - overlay
+    deploy:
+      mode: replicated
+      replicas: 2
+      endpoint_mode: vip
+
+  mysql:
+    image: mysql
+    volumes:
+       - db-data:/var/lib/mysql/data
+    networks:
+       - overlay
+    deploy:
+      mode: replicated
+      replicas: 2
+      endpoint_mode: dnsrr
+
+volumes:
+  db-data:
+
+networks:
+  overlay:
+
+```
+
+* endpoint_mode:
+
+    endpoint_mode: vip - Docker assigns the service a virtual IP (VIP) 
+
+    endpoint_mode: dnsrr - DNS round-robin (DNSRR) service discovery does not use a single virtual IP.
+
+* MODE:
+
+    global  : 一个swarm node上只能有一个该容器；不能横向扩展；
+    replicated： 可以有多个；默认是该选项；
+
+* PLACEMENT：
+
+```yaml
+version: '3.3'
+services:
+  db:
+    image: postgres
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager    # 指定了service运行在manager节点上；
+          - engine.labels.operatingsystem == ubuntu 14.04
+        preferences:
+          - spread: node.labels.zone
+```
+
+* REPLICAS:
+
+```yaml
+version: '3'
+services:
+  worker:
+    image: dockersamples/examplevotingapp_worker
+    networks:
+      - frontend
+      - backend
+    deploy:
+      mode: replicated
+      replicas: 6   # 和mode: replicated结合使用，一开始就启动6个service；
+```
+
+* RESOURCES： 做资源限制；
+
+* RESTART_POLICY
+* UPDATE_CONFIG
+
+
+* 实验：使用DockerStack部署WordPress：
+
+```yaml
+[vagrant@swarm-manager wordpress]$ cat docker-compose.yml
+version: '3'
+
+services:
+
+  web:
+    image: wordpress
+    ports:
+      - 8080:80
+    environment:
+      WORDPRESS_DB_HOST: mysql
+      WORDPRESS_DB_PASSWORD: root
+    networks:
+      - my-network
+    depends_on:
+      - mysql
+    deploy:
+      mode: replicated
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+
+  mysql:
+    image: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: wordpress
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - my-network
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+
+volumes:
+  mysql-data:
+
+networks:
+  my-network:
+    driver: overlay
+```
+
+docker stack 命令在swarm中部署services：
+
+```bash
+[vagrant@swarm-manager wordpress]$ docker stack
+
+Usage:  docker stack [OPTIONS] COMMAND
+
+Manage Docker stacks
+
+Options:
+      --orchestrator string   Orchestrator to use (swarm|kubernetes|all)
+
+Commands:
+  deploy      Deploy a new stack or update an existing stack
+  ls          List stacks
+  ps          List the tasks in the stack
+  rm          Remove one or more stacks
+  services    List the services in the stack
+
+Run 'docker stack COMMAND --help' for more information on a command.
+```
+
+```bash
+[vagrant@swarm-manager wordpress]$ docker stack deploy wordpress --compose-file docker-compose.yml
+Creating network wordpress_my-network
+Creating service wordpress_mysql
+Creating service wordpress_web
+[vagrant@swarm-manager wordpress]$ docker stack ps wordpress
+[vagrant@swarm-manager wordpress]$ docker stack services wordpress
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+m2esi3e45jv8        wordpress_mysql     global              1/1                 mysql:latest
+q6rp7987davs        wordpress_web       replicated          0/3                 wordpress:latest    *:8080->80/tcp
+
+[vagrant@swarm-manager wordpress]$ docker stack rm wordpress
+Removing service wordpress_mysql
+Removing service wordpress_web
+Removing network wordpress_my-network
+[vagrant@swarm-manager wordpress]$ docker stack ls
+NAME                SERVICES            ORCHESTRATOR
+```
+
+* docker stack deploy example-vote-app:
+
+```yaml
+[vagrant@swarm-manager example-vote-app]$ cat docker-compose.yml
+version: "3"
+services:
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379"
+    networks:
+      - frontend
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 2
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  db:
+    image: postgres:9.4
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    networks:
+      - backend
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  vote:
+    image: dockersamples/examplevotingapp_vote:before
+    ports:
+      - 5000:80
+    networks:
+      - frontend
+    depends_on:
+      - redis
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 2
+      restart_policy:
+        condition: on-failure
+
+  result:
+    image: dockersamples/examplevotingapp_result:before
+    ports:
+      - 5001:80
+    networks:
+      - backend
+    depends_on:
+      - db
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 2
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  worker:
+    image: dockersamples/examplevotingapp_worker
+    networks:
+      - frontend
+      - backend
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels: [APP=VOTING]
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+        window: 120s
+      placement:
+        constraints: [node.role == manager]
+
+  visualizer:
+    image: dockersamples/visualizer:stable
+    ports:
+      - "8080:8080"
+    stop_grace_period: 1m30s
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+networks:
+  frontend:
+  backend:
+
+volumes:
+  db-data:
+```
+
+```bash
+[vagrant@swarm-manager example-vote-app]$ docker stack deploy example --compose-file docker-compose.yml
+Creating network example_default
+Creating network example_frontend
+Creating network example_backend
+Creating service example_visualizer
+Creating service example_redis
+Creating service example_db
+Creating service example_vote
+Creating service example_result
+Creating service example_worker
+
+[vagrant@swarm-manager example-vote-app]$ docker stack services example
+ID                  NAME                 MODE                REPLICAS            IMAGE                                          PORTS
+7ipn32lt3bq6        example_vote         replicated          1/2                 dockersamples/examplevotingapp_vote:before     *:5000->80/tcp
+h6gikd4w9jua        example_result       replicated          1/1                 dockersamples/examplevotingapp_result:before   *:5001->80/tcp
+oe5cnachwphw        example_worker       replicated          0/1                 dockersamples/examplevotingapp_worker:latest
+# worker service 并没有启动；
+vbe90700d0gh        example_visualizer   replicated          1/1                 dockersamples/visualizer:stable                *:8080->8080/tcp
+w1o7d13httxb        example_redis        replicated          2/2                 redis:alpine                                   *:30000->6379/tcp
+yf7wx4a2xidf        example_db           replicated          1/1                 postgres:9.4
+
+# 等了很久后，看来这个java的程序启动很慢啊；
+[vagrant@swarm-manager example-vote-app]$ docker stack services example
+ID                  NAME                 MODE                REPLICAS            IMAGE                                          PORTS
+7ipn32lt3bq6        example_vote         replicated          2/2                 dockersamples/examplevotingapp_vote:before     *:5000->80/tcp
+h6gikd4w9jua        example_result       replicated          1/1                 dockersamples/examplevotingapp_result:before   *:5001->80/tcp
+oe5cnachwphw        example_worker       replicated          1/1                 dockersamples/examplevotingapp_worker:latest
+vbe90700d0gh        example_visualizer   replicated          1/1                 dockersamples/visualizer:stable                *:8080->8080/tcp
+w1o7d13httxb        example_redis        replicated          2/2                 redis:alpine                                   *:30000->6379/tcp
+yf7wx4a2xidf        example_db           replicated          1/1                 postgres:9.4
+
+# 此时若感觉vote的访问流量较大，响应时间较长，可以进行scale：
+[vagrant@swarm-manager example-vote-app]$ docker service scale example_vote=5
+example_vote scaled to 5
+overall progress: 5 out of 5 tasks
+1/5: running   [==================================================>]
+2/5: running   [==================================================>]
+3/5: running   [==================================================>]
+4/5: running   [==================================================>]
+5/5: running   [==================================================>]
+verify: Service converged
+
+[vagrant@swarm-manager example-vote-app]$ docker stack services example
+ID                  NAME                 MODE                REPLICAS            IMAGE                                          PORTS
+7ipn32lt3bq6        example_vote         replicated          5/5                 dockersamples/examplevotingapp_vote:before     *:5000->80/tcp
+h6gikd4w9jua        example_result       replicated          1/1                 dockersamples/examplevotingapp_result:before   *:5001->80/tcp
+oe5cnachwphw        example_worker       replicated          1/1                 dockersamples/examplevotingapp_worker:latest
+vbe90700d0gh        example_visualizer   replicated          1/1                 dockersamples/visualizer:stable                *:8080->8080/tcp
+w1o7d13httxb        example_redis        replicated          2/2                 redis:alpine                                   *:30000->6379/tcp
+yf7wx4a2xidf        example_db           replicated          1/1                 postgres:9.4
+```
+
+![swarm_monitor](images/swarm_monitor.png)
+
+### docker secre management:
+
+密码写在docker-compose.yml文件中不安全。
+
+* 什么是secret？
+  - 用户名和密码
+  - SSH Key
+  - TLS认证
+  - 任何不想让别人看到的数据
+
+![Docker_Swarm_Mode_Architecture](images/Docker_Swarm_Mode_Architecture.png)
+
+
+* Secret Management:
+  - 存在Swarm Manager节点Raft database里。
+  - Secret可以assign给一个service，这个service就能看到这个secret；
+  - 在container内部Secret看起来像文件，但是实际是在内存中。
+
+
+* 创建secret： docker secret create;
+
+```bash
+[vagrant@swarm-manager example-vote-app]$ docker secret create --help
+
+Usage:  docker secret create [OPTIONS] SECRET [file|-]
+# 从文件或标准输入创建secret；
+Create a secret from a file or STDIN as content
+
+Options:
+  -d, --driver string            Secret driver
+  -l, --label list               Secret labels
+      --template-driver string   Template driver
+
+# 从文件创建一个secret：
+[vagrant@swarm-manager example-vote-app]$ echo "password" > password
+[vagrant@swarm-manager example-vote-app]$ docker secret create my-pw password
+ojl1a4p4ypb29slw6xeqrnn34
+# 创建完成后，安全起见，建议删除文件：
+[vagrant@swarm-manager example-vote-app]$ rm -f password
+[vagrant@swarm-manager example-vote-app]$ docker secret ls
+ID                          NAME                DRIVER              CREATED             UPDATED
+ojl1a4p4ypb29slw6xeqrnn34   my-pw                                   8 minutes ago       8 minutes ago
+
+
+# 从标准输入创建secret：
+[vagrant@swarm-manager example-vote-app]$ echo "adminadmin" | docker secret create my-pw2 -
+71xy6ku4f3euw2uagm722uf8l
+[vagrant@swarm-manager example-vote-app]$ docker secret ls
+ID                          NAME                DRIVER              CREATED             UPDATED
+ojl1a4p4ypb29slw6xeqrnn34   my-pw                                   9 minutes ago       9 minutes ago
+71xy6ku4f3euw2uagm722uf8l   my-pw2                                  24 seconds ago      24 seconds ago
+
+# 如何使用secret？
+[vagrant@swarm-manager example-vote-app]$  docker service create --name client --secret my-pw busybox sh -c "while true; do sleep 3600; done"
+image busybox:latest could not be accessed on a registry to record
+its digest. Each node will access busybox:latest independently,
+possibly leading to different nodes running different
+versions of the image.
+
+z8y6omuru5saedv3pml08d2z2
+overall progress: 1 out of 1 tasks
+1/1: running   [==================================================>]
+verify: Service converged
+
+[vagrant@swarm-manager example-vote-app]$ docker service ls
+ID                  NAME                 MODE                REPLICAS            IMAGE                                          PORTS
+z8y6omuru5sa        client               replicated          1/1                 busybox:latest
+yf7wx4a2xidf        example_db           replicated          1/1                 postgres:9.4
+w1o7d13httxb        example_redis        replicated          2/2                 redis:alpine                                   *:30000->6379/tcp
+h6gikd4w9jua        example_result       replicated          1/1                 dockersamples/examplevotingapp_result:before   *:5001->80/tcp
+vbe90700d0gh        example_visualizer   replicated          1/1                 dockersamples/visualizer:stable                *:8080->8080/tcp
+7ipn32lt3bq6        example_vote         replicated          5/5                 dockersamples/examplevotingapp_vote:before     *:5000->80/tcp
+oe5cnachwphw        example_worker       replicated          1/1                 dockersamples/examplevotingapp_worker:latest
+
+[vagrant@swarm-manager example-vote-app]$ docker service ps client
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+4nwwt7ayiqq8        client.1            busybox:latest      swarm-worker2       Running             Running 31 seconds ago
+
+[vagrant@swarm-worker2 ~]$ docker exec -it ff15c0f71321 sh
+/ # cd /run/secrets/
+/run/secrets # ls
+my-pw
+/run/secrets # cat my-pw
+password
+```
+
+* 使用secrete传递mysql的root密码：
+
+```bash
+[vagrant@swarm-manager example-vote-app]$ docker service create --name db --secret my-pw -e MYSQL_ROOT_PASSWORD_FILE=/run/secrets/my-pw mysql
+tlydmmpgmythuvati6342yxe2
+overall progress: 1 out of 1 tasks
+1/1: running   [==================================================>]
+verify: Service converged
+[vagrant@swarm-manager example-vote-app]$ docker service ls
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+tlydmmpgmyth        db                  replicated          1/1                 mysql:latest
+[vagrant@swarm-manager example-vote-app]$ docker service ps db
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+dy7w561bbztm        db.1                mysql:latest        swarm-worker1       Running             Running 17 seconds ago
+
+
+[vagrant@swarm-worker1 ~]$ docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                 NAMES
+4cc4f174cd9c        mysql:latest        "docker-entrypoint.s鈥?"   48 seconds ago      Up 47 seconds       3306/tcp, 33060/tcp   db.1.dy7w561bbztmm7uwtuq9lprk1
+[vagrant@swarm-worker1 ~]$ docker exec -it 4cc4f174cd9c sh
+# ls /run/secrets
+my-pw
+# cat /run/secrets/my-pw
+password
+# mysql -u root -p
+Enter password:
+Welcome to the MySQL monitor.  Commands end with ; or \g.
+Your MySQL connection id is 8
+Server version: 8.0.15 MySQL Community Server - GPL
+
+Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+
+Oracle is a registered trademark of Oracle Corporation and/or its
+affiliates. Other names may be trademarks of their respective
+owners.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+```
+
+* docker secret 在docker-compose.yml文件中的使用：
+
+```yaml
+[vagrant@swarm-manager secret-example]$ cat docker-compose.yml
+version: '3'
+
+services:
+
+  web:
+    image: wordpress
+    ports:
+      - 8080:80
+    secrets:
+      - my-pw
+    environment:
+      WORDPRESS_DB_HOST: mysql
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/my-pw
+    networks:
+      - my-network
+    depends_on:
+      - mysql
+    deploy:
+      mode: replicated
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+
+  mysql:
+    image: mysql
+    secrets:
+      - my-pw
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/my-pw
+      MYSQL_DATABASE: wordpress
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - my-network
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+
+volumes:
+  mysql-data:
+
+networks:
+  my-network:
+    driver: overlay
+
+# secrets建议先创建好，然后在docker-compose文件中直接使用，不建议像下面一样去定义：
+# secrets:
+#   my-pw:
+#    file: ./password
+```
+
+```bash
+[vagrant@swarm-manager secret-example]$ docker stack deploy wordpress --compose-file docker-compose.yml
+Creating secret wordpress_my-pw
+Creating service wordpress_web
+
+[vagrant@swarm-manager secret-example]$ docker stack services wordpress
+[vagrant@swarm-manager secret-example]$ docker stack ps wordpress
+```
+
+### 对docker service进行更新：
+
+```bash
+[vagrant@swarm-manager secret-example]$ docker network ls | grep overlay
+2u0oa8vha2b0        demo                   overlay             swarm
+l91saqatrypt        ingress                overlay             swarm
+z2docjqg1d2y        wordpress_my-network   overlay             swarm
+
+[vagrant@swarm-manager secret-example]$ docker service create --name web --publish 8080:5000 --network demo sslinux/python-flask-demo:1.0
+
+[vagrant@swarm-manager secret-example]$ docker service ps web
+
+# 此时更新了python-flask的代码：
+# 为了不停止服务，需要先对service进行横向扩展：
+
+[vagrant@swarm-manager secret-example]$ docker service scale web=2
+[vagrant@swarm-manager secret-example]$ docker service ps web
+[vagrant@swarm-manager secret-example]$ 
+# 对image的更新：
+[vagrant@swarm-manager secret-example]$ docker service update --image sslinux/python-flask-demo:2.0 demo
+
+# 对端口的更新：
+[vagrant@swarm-manager secret-example]$ docker service update --publish-rm 8080:5000 --publish-add 8088:5000 web
+
+# 修改docker-compose文件后，重新docker stack deploy更新；
+```
+
+---
+
+## 第八章：DevOps初体验——Docker Cloud和Docker企业版
+
+### Docker的收费模式
+
+* docker-EE 企业版，收费；
+* training，培训收费，很贵哦；
+* certification，认证；
+* the docker store，经过官方认证的镜像等；
+* docker cloud，还是要钱；
+
+### Docker Cloud， CaaS——Container-as-a-Service
+
+* IaaS——Infrastructure-as-a-Service：基础架构即服务；
+* PaaS——Platform-as-a-Service： 一般公有云提供商；Amazon,Google,Aliyun等；
+
+Docker Cloud由收购 tutum 而来； --> Docker Cloud
+收购 fig --> docker-compose
+
+* 什么是Docker Cloud？
+  - 提供容器的管理，编排，部署的托管服务；
+  
+* 主要模块：
+  - Image管理
+  - 关联云服务商AWS，Azure；
+  - 添加节点作为Docker Host；
+  - 创建服务Service
+  - 创建Stack
+
+* 两种模式：
+  - Standard模式。 一个Node就是一个Docker Host；
+  - Swarm模式(beta),多个Node组成的Swarm Cluster；
+
+![docker_cloud_1](images/docker_cloud_1.jpg)
+
+
+### cloud.docker.com 
+* 将自己的docker cloud账号与github账号进行关联；
+
+
+### 1.在线免费试用Docker Enterprise： 免费试用12小时
+
+https://trial.docker.com/
+
+### 2.自己安装Docker Enterprise：免费试用1个月(License)
+
+https://hub.docker.com/search?q=&type=edition&offering=enterprise
+
+免费申请试用1个月：https://hub.docker.com/editions/enterprise/docker-ee-server-centos
+
+https://hub.docker.com/editions/enterprise/docker-ee-server-centos/trial
+
+![docker-ee试用申请成功](images/docker-ee试用申请成功.png)
+
+* 1.安装docker-ee engine：
+
+[centos install docker-ee](https://docs.docker.com/install/linux/docker-ee/centos/)
+
+```bash
+# Uninstall old version:
+[vagrant@docker-ee-manager ~]$ sudo yum remove docker \
+>                   docker-client \
+>                   docker-client-latest \
+>                   docker-common \
+>                   docker-latest \
+>                   docker-latest-logrotate \
+>                   docker-logrotate \
+>                   docker-selinux \
+>                   docker-engine-selinux \
+>                   docker-engine
+Loaded plugins: fastestmirror
+No Match for argument: docker
+No Match for argument: docker-client
+No Match for argument: docker-client-latest
+No Match for argument: docker-common
+No Match for argument: docker-latest
+No Match for argument: docker-latest-logrotate
+No Match for argument: docker-logrotate
+No Match for argument: docker-selinux
+No Match for argument: docker-engine-selinux
+No Match for argument: docker-engine
+No Packages marked for removal
+
+
+# Set up the repository
+[vagrant@docker-ee-manager ~]$ sudo rm /etc/yum.repos.d/docker*.repo
+rm: cannot remove 鈥?/etc/yum.repos.d/docker*.repo鈥?: No such file or directory
+[vagrant@docker-ee-manager ~]$ export DOCKERURL="https://storebits.docker.com/ee/centos/sub-1986fd30-5d3d-409f-a038-1e430c314012" # 该网址由申请试用时获得；
+
+[vagrant@docker-ee-manager ~]$ sudo -E sh -c 'echo "$DOCKERURL/centos" > /etc/yum/vars/dockerurl'
+
+[vagrant@docker-ee-manager ~]$ sudo yum install -y yum-utils \
+>   device-mapper-persistent-data \
+>   lvm2
+
+[vagrant@docker-ee-manager ~]$ sudo -E yum-config-manager \
+>     --add-repo \
+>     "$DOCKERURL/centos/docker-ee.repo"
+
+
+# Install from the repository
+[vagrant@docker-ee-manager ~]$ sudo yum -y install docker-ee docker-ee-cli containerd.io
+
+# start docker：
+[vagrant@docker-ee-manager ~]$ sudo systemctl start docker
+
+# test docker
+[vagrant@docker-ee-worker ~]$ sudo docker version
+Client:
+ Version:           18.09.3
+ API version:       1.39
+ Go version:        go1.10.6
+ Git commit:        142dfce
+ Built:             Thu Feb 28 06:08:06 2019
+ OS/Arch:           linux/amd64
+ Experimental:      false
+
+Server: Docker Engine - Enterprise
+ Engine:
+  Version:          18.09.3
+  API version:      1.39 (minimum version 1.12)
+  Go version:       go1.10.8
+  Git commit:       142dfce
+  Built:            Thu Feb 28 06:03:18 2019
+  OS/Arch:          linux/amd64
+  Experimental:     false
+```
+
+* 2.安装docker-ee UCP
+
+https://docs.docker.com/ee/end-to-end-install/
+
+```bash
+[vagrant@docker-ee-manager ~]$ sudo docker container run --rm -it --name ucp   -v /var/run/docker.sock:/var/run/docker.sock   docker/ucp:3.1.4 install   --host-address 192.168.250.50 --interactive
+
+# 交互式的设置UCP的Admin Username和Admin Password；
+# 并且要求验证Docker HUB的用户名和密码；
+
+# 新版本的要求空闲内存为4GB；
+# 加上选项--force-minimums选项可以强制使用最小；
+[vagrant@docker-ee-manager ~]$ sudo docker container run --rm -it --name ucp   -v /var/run/docker.sock:/var/run/docker.sock   docker/ucp:3.1.4 install --force-minimums --host-address 192.168.250.50 --interactive
+INFO[0000] Your engine version 18.09.3, build 142dfce (3.10.0-957.1.3.el7.x86_64) is compatible with UCP 3.1.4 (29b16f9)
+WARN[0000] Your system does not have enough memory.  UCP suggests a minimum of 4.00 GB, but you only have 3.88 GB.  You may have unexpected errors.
+Admin Username: admin
+Admin Password:
+invalid: Admin Password - must be at least 8 characters
+Admin Password:
+invalid: Admin Password - must be at least 8 characters
+Admin Password:
+Confirm Admin Password:
+INFO[0020] Pulling required images... (this may take a while)
+INFO[0020] Pulling docker/ucp-calico-kube-controllers:3.1.4
+INFO[0058] Pulling docker/ucp-kube-compose:3.1.4
+INFO[0063] Pulling docker/ucp-metrics:3.1.4
+
+# 然后便可以通过浏览器登录，上传License文件即可使用了。
+```
+
+`Docker-EE UCP(Universol Control Plane),可以理解为网页版的Docker Swarm(网页完成DockerSwarm的功能)。`
+
+![Docker-EE组件](images/Docker-EE组件.jpg)
+
+* Install Docker Trusted Registry
+
+```bash
+docker container run -it --rm \
+  docker/dtr:2.6.3 install \
+  --ucp-node <node-hostname> \
+  --ucp-insecure-tls
+```
+
+* UCP的基本使用，基于界面，自行熟悉；
+
+### 阿里云的容器服务：
+
+阿里云： https://cn.aliyun.com/
+
+阿里云容器服务： https://cn.aliyun.com/product/containerservice
+
+![阿里云容器服务](images/阿里云容器服务.png)
+
+* aliyun安全市场： https://market.aliyun.com/security?spm=a21cy.7848237.401001.5.xuddSo
+
+        search： docker企业版
+
+![阿里云安全市场Docker企业版](images/阿里云安全市场Docker企业版.png)
+
+![阿里云docker企业版订单](images/阿里云docker企业版订单.png)
+
+Docker EE 安装帮助：https://download.cs.aliyun.com/downloads/engine.htm?sourceSecret=0cda3959-e40b-4a7c-92d9-9e9b1be1a1e4
+
+License 下载地址：https://download.cs.aliyun.com/downloads/license?instanceId=bc637cd98921535f84a7a257acfb835f
+
+创建阿里云ECS(弹性计算)实例后，按上述安装帮助文档进行安装；
+
+* 也可以开通阿里云资源编排服务(ros)
+
+### docker企业版的DTR的使用：
+
+```bash
+# 将镜像打上新的标签；
+[vagrant@docker-ee-manager ~]$ docker tag sslinux/python-flask-demo:latest 118.190.121.181/admin/demo
+
+# 需要登录，并且需要解决私有证书信任问题；
+[vagrant@docker-ee-manager ~]$ docker push 118.190.121.181/admin/demo
+```
+
+----
+
+## 第九章：容器编排Kubernetes(K8S)
+
+![DockerSwarmModeArchitecture](images/DockerSwarmModeArchitecture.jpg)
+
+![kubernetes_architecture](images/kubernetes_architecture.png)
+
+### Kubernetes Master
+* API Server
+* Scheduler
+* Controller
+* etcd
+
+![kubernetes_master](images/kubernetes_master.png)
+
+### Kubernetes Node
+
+![kubernetes_node](images/kubernetes_node.png)
+
+* Pod ：Kubernetes集群中可调度的最小单位；具有相同namespace的容器组合；主要是networknamespace，里面可以包含一个或多个容器，若是多个容器，则共享namespace；
+
+* kubelet： 类似于一个agent，负责container、network、volumes等的管理；
+
+* kube-proxy： 网络相关；端口的代理、转发、负载均衡；
+
+* Fluentd： 日志的采集、存储、查询；
+
+* 插件： DNS，UI，etc.
+
+![kubernetes_detail](images/kubernetes_detail.png)
+
+
+### 安装配置工具：
+
+* [不使用任何脚本的自己搭建kubernetes集群](https://github.com/kelseyhightower/kubernetes-the-hard-way)
+
+* [minikube快速搭建K8S单节点环境](https://github.com/kubernetes/minikube)
+
+* [本地搭建多节点的K8S环境](https://github.com/kubernetes/kubeadm)
+
+* [在cloud上安装K8S集群](https://github.com/kubernetes/kops)
+
+* [CoreOS团队提供的企业版K8S管理工具tectonic](https://coreos.com/tectonic/)
+
+* [Play with Kubernetes](https://labs.play-with-k8s.com/)
+
+
+### 使用minikube搭建单节点环境：
+
+```
+Windows 10
+    Requires a hypervisor, such as VirtualBox (recommended) or HyperV
+    VT-x/AMD-v virtualization must be enabled in BIOS
+    using chocolatey choco install minikube
+    manually: Download and run the installer
+```
+
+需要依赖： 
+
+```bash
+curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.13.0/bin/windows/amd64/kubectl.exe
+
+xiong@sslinux-development MINGW64 /f/Software
+$ export PATH=$(pwd):$PATH
+
+# 下载minikube，并重命名为minikube.exe,添加到PATH；
+https://github.com/kubernetes/minikube/releases/download/v0.35.0/minikube-windows-amd64
+
+xiong@sslinux-development MINGW64 /f/Software
+$ kubectl.exe version
+Client Version: version.Info{Major:"1", Minor:"13", GitVersion:"v1.13.0", GitCommit:"ddf47ac13c1a9483ea035a79cd7c10005ff21a6d", GitTreeState:"clean", BuildDate:"2018-12-03T21:04:45Z", GoVersion:"go1.11.2", Compiler:"gc", Platform:"windows/amd64"}
+Unable to connect to the server: dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it.
+
+xiong@sslinux-development MINGW64 /f/Software
+$ minikube.exe version
+minikube version: v0.35.0
+```
+
+```powershell
+# windows上在pull image时总是出错，查不到原因；
+PS C:\Windows\system32> .\minikube.exe start
+o   minikube v0.35.0 on windows (amd64)
+>   Creating virtualbox VM (CPUs=2, Memory=2048MB, Disk=20000MB) ...
+@   Downloading Minikube ISO ...
+ 184.42 MB / 184.42 MB [============================================] 100.00% 0s
+-   "minikube" IP address is 192.168.99.101
+-   Configuring Docker as the container runtime ...
+-   Preparing Kubernetes environment ...
+@   Downloading kubeadm v1.13.4
+@   Downloading kubelet v1.13.4
+-   Pulling images required by Kubernetes v1.13.4 ...
+X   Unable to pull images, which may be OK: running cmd: sudo kubeadm config images pull --config /var/lib/kubeadm.yaml: command failed: sudo kubeadm config images pull --config /var/lib/kubeadm.yaml
+stdout:
+stderr: failed to pull image "k8s.gcr.io/kube-apiserver:v1.13.4": output: Error response from daemon: Get https://k8s.gcr.io/v2/: net/http: request canceled while waiting for connection (Client.Timeout exceeded while awaiting headers)
+, error: exit status 1
+: Process exited with status 1
+-   Launching Kubernetes v1.13.4 using kubeadm ...
+```
 
 
 
 
 
 
-第八章：DevOps初体验——Docker Cloud和Docker企业版
 
-第九章：容器编排Kubernetes
 
 第十章：容器的运维和监控
 
